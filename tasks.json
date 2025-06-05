@@ -4,7 +4,7 @@
     "version": "0.1.0",
     "prdSource": "prd.txt",
     "createdAt": "2024-06-01T12:00:00Z",
-    "updatedAt": "2024-06-01T12:15:00Z"
+    "updatedAt": "2024-06-01T12:25:00Z"
   },
   "tasks": [
     {
@@ -16,7 +16,7 @@
       "priority": "high",
       "dependencies": [],
       "status": "pending",
-      "updatedAt": "2024-06-01T12:15:00Z",
+      "updatedAt": "2024-06-01T12:25:00Z",
       "subtasks": [
         {
           "id": "1.1",
@@ -34,9 +34,9 @@
           "description": "Set up system for loading configurations (e.g., API keys, settings) from environment variables and .env files.",
           "details": "Use `python-dotenv`. Define expected configuration variables (e.g., `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `LOG_LEVEL`). Implement a config loading module/service accessible throughout the application. Ensure sensitive keys are not hardcoded.",
           "acceptanceCriteria": "Configuration values can be loaded correctly. Missing critical configurations prevent startup or are handled with clear error messages.",
-          "status": "in-progress",
+          "status": "done",
           "dependencies": ["1.1"],
-          "updatedAt": "2024-06-01T12:15:00Z"
+          "updatedAt": "2024-06-01T12:25:00Z"
         },
         {
           "id": "1.3",
