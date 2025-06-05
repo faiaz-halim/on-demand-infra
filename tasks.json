@@ -4,7 +4,7 @@
     "version": "0.1.0",
     "prdSource": "prd.txt",
     "createdAt": "2024-06-01T12:00:00Z",
-    "updatedAt": "2024-06-01T12:25:00Z"
+    "updatedAt": "2024-06-01T12:50:00Z"
   },
   "tasks": [
     {
@@ -16,7 +16,7 @@
       "priority": "high",
       "dependencies": [],
       "status": "pending",
-      "updatedAt": "2024-06-01T12:25:00Z",
+      "updatedAt": "2024-06-01T12:50:00Z",
       "subtasks": [
         {
           "id": "1.1",
@@ -44,8 +44,9 @@
           "description": "Create the HTTP POST endpoint `/v1/chat/completions` that mimics the OpenAI API structure for receiving chat requests.",
           "details": "Define Pydantic models for request (`ChatCompletionRequest`) and response (`ChatCompletionResponse`, `ChatCompletionChunk`) bodies according to OpenAI specification. Implement basic request validation. Support streaming responses (`stream=true`).",
           "acceptanceCriteria": "Endpoint accepts valid JSON POST requests matching OpenAI format and returns a valid JSON response (or streams chunks). Invalid requests are handled with appropriate HTTP error codes (400, 422).",
-          "status": "pending",
-          "dependencies": ["1.1"]
+          "status": "done",
+          "dependencies": ["1.1"],
+          "updatedAt": "2024-06-01T12:35:00Z"
         },
         {
           "id": "1.4",
@@ -53,8 +54,9 @@
           "description": "Integrate with Azure OpenAI client library to forward processed chat messages and return responses via the API endpoint.",
           "details": "Use the `openai` library configured for Azure (API key, endpoint, API version from config). Implement logic to take incoming messages from the API, format them for Azure OpenAI, send the request, and return/stream the Azure OpenAI response. Handle API errors from Azure (e.g., authentication, rate limits).",
           "acceptanceCriteria": "A message sent to the `/v1/chat/completions` endpoint is successfully processed by Azure OpenAI, and its response is returned/streamed to the client.",
-          "status": "pending",
-          "dependencies": ["1.2", "1.3"]
+          "status": "done",
+          "dependencies": ["1.2", "1.3"],
+          "updatedAt": "2024-06-01T12:45:00Z"
         },
         {
           "id": "1.5",
@@ -62,8 +64,9 @@
           "description": "Set up structured logging (e.g., JSON format) across the application for better monitoring and debugging.",
           "details": "Use Python's `logging` module. Configure a JSON formatter (e.g., `python-json-logger`). Ensure logs include timestamp, level, message, module name, and relevant context (e.g., request ID if applicable). Log to stdout/stderr for containerized environments.",
           "acceptanceCriteria": "Application events (startup, requests, errors, significant operations) are logged in a structured JSON format. Log levels are configurable via environment variable.",
-          "status": "pending",
-          "dependencies": ["1.1"]
+          "status": "in-progress",
+          "dependencies": ["1.1"],
+          "updatedAt": "2024-06-01T12:50:00Z"
         },
         {
           "id": "1.6",
