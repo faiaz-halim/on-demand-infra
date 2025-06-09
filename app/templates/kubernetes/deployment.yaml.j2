@@ -1,0 +1,47 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ app_name }}
+  namespace: {{ namespace }}
+  labels:
+    app: {{ app_name }}
+spec:
+  replicas: {{ replicas }}
+  selector:
+    matchLabels:
+      app: {{ app_name }}
+  template:
+    metadata:
+      labels:
+        app: {{ app_name }}
+    spec:
+      containers:
+      - name: {{ app_name }}
+        image: {{ image_name }}
+        ports:
+        {% if ports %}
+        {% for port in ports %}
+        - containerPort: {{ port }}
+        {% endfor %}
+        {% endif %}
+        {% if env_vars or secret_name %}
+        env:
+        {% if env_vars %}
+        {% for key, value in env_vars.items() %}
+        - name: "{{ key }}"
+          value: "{{ value }}"
+        {% endfor %}
+        {% endif %}
+        {% if secret_name %}
+        envFrom:
+        - secretRef:
+            name: {{ secret_name }}
+        {% endif %}
+        {% endif %}
+        resources:
+          requests:
+            cpu: "{{ cpu_request }}"
+            memory: "{{ memory_request }}"
+          limits:
+            cpu: "{{ cpu_limit }}"
+            memory: "{{ memory_limit }}"

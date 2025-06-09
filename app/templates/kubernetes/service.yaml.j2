@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ app_name }}
+  namespace: {{ namespace }}
+spec:
+  type: {{ service_type }}
+  selector:
+    app: {{ app_name }}
+  ports:
+  {% for p_map in ports_mapping %}
+  - name: {{ p_map.name | default("http-" ~ p_map.port) }}
+    port: {{ p_map.port }}
+    targetPort: {{ p_map.targetPort }}
+    {% if p_map.nodePort and service_type == "NodePort" %}
+    nodePort: {{ p_map.nodePort }}
+    {% endif %}
+    protocol: {{ p_map.protocol | default("TCP") }}
+  {% endfor %}

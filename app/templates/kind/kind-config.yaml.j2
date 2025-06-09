@@ -1,0 +1,18 @@
+# kind-config.yaml.j2
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: {{ cluster_name }}
+nodes:
+- role: control-plane
+{% if num_workers and num_workers > 0 %}
+{% for i in range(num_workers) %}
+- role: worker
+{% endfor %}
+{% endif %}
+# Example of a feature gate, can be passed in context
+{% if feature_gates %}
+featureGates:
+{% for key, value in feature_gates.items() %}
+  "{{ key }}": {{ value | lower }}
+{% endfor %}
+{% endif %}

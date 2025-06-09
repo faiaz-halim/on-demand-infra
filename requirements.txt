@@ -6,3 +6,5 @@ openai
 pydantic-settings
 python-json-logger
 docker
+Jinja2>=3.0.0
+PyYAML>=5.0.0

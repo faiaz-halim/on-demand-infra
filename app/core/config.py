@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     # Logging configuration
     LOG_LEVEL: str = "INFO"
 
+    # Kind Cluster settings
+    KIND_CLUSTER_NAME: str = "on-demand-infra"
+    KIND_CALICO_MANIFEST_URL: Optional[str] = "https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/calico.yaml"
+
+
     # Model configuration for .env file
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding='utf-8', extra='ignore')
 
