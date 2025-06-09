@@ -1,7 +1,15 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 from typing import List, Optional, Union, Literal, Dict, Any
 
 # Based on OpenAI API documentation for chat completions
+
+class AWSCredentials(BaseModel):
+    aws_access_key_id: SecretStr
+    aws_secret_access_key: SecretStr
+    aws_region: str
+
+    model_config = {'extra': 'ignore'}
+
 
 class ChatMessage(BaseModel):
     role: Literal["system", "user", "assistant", "tool"]
@@ -23,10 +31,15 @@ class ChatCompletionRequest(BaseModel):
     frequency_penalty: Optional[float] = 0.0
     logit_bias: Optional[Dict[str, float]] = None
     user: Optional[str] = None
-    # Custom MCP Server parameters can be added here later if needed
-    # e.g., github_repository_url: Optional[str] = None
-    # deployment_mode: Optional[str] = None
-    # aws_credentials: Optional[Dict[str, str]] = None
+
+    # Custom MCP Server parameters
+    github_repo_url: Optional[str] = Field(default=None, description="URL of the GitHub repository to deploy.")
+    deployment_mode: Optional[Literal["local", "cloud-local", "cloud-hosted"]] = Field(default="local", description="The desired deployment mode.")
+    aws_credentials: Optional[AWSCredentials] = Field(default=None, description="AWS credentials, required for cloud-local and cloud-hosted modes.")
+    target_namespace: Optional[str] = Field(default="default", description="Target Kubernetes namespace for the deployment.")
+    # Add other deployment-specific parameters as needed, e.g.:
+    # instance_size: Optional[str] = Field(default=None, description="EC2 instance size for cloud-local mode.")
+    # application_environment_variables: Optional[Dict[str, str]] = Field(default_factory=dict, description="Environment variables for the application.")
 
 
 class ChoiceDelta(BaseModel):
