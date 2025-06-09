@@ -4,7 +4,7 @@
     "version": "0.1.0",
     "prdSource": "prd.txt",
     "createdAt": "2024-06-01T12:00:00Z",
-    "updatedAt": "2024-06-01T14:05:00Z"
+    "updatedAt": "2024-06-01T14:30:00Z"
   },
   "tasks": [
     {
@@ -108,8 +108,8 @@
       "testStrategy": "Unit tests for Dockerfile check functions. Integration test for building a sample Docker image. Manual test: provide a repo with a Dockerfile, verify checks are run and image is built.",
       "priority": "high",
       "dependencies": [1],
-      "status": "in-progress",
-      "updatedAt": "2024-06-01T14:05:00Z",
+      "status": "done",
+      "updatedAt": "2024-06-01T14:30:00Z",
       "subtasks": [
         {
           "id": "2.1",
@@ -119,7 +119,7 @@
           "acceptanceCriteria": "Given a Dockerfile content, a list of potential issues or suggestions is generated. Passes for a known good Dockerfile.",
           "status": "done",
           "dependencies": ["1.8"],
-          "updatedAt": "2024-06-01T13:55:00Z"
+          "updatedAt": "2024-06-01T14:20:00Z"
         },
         {
           "id": "2.2",
@@ -127,9 +127,9 @@
           "description": "Implement a service to build a Docker image locally using the host's Docker daemon from a given build context (cloned repository path).",
           "details": "Use the Docker SDK for Python (`docker` library) or `subprocess` to call Docker CLI. Capture build logs. Handle build errors and report them clearly. Tag images appropriately (e.g., based on repo name and a unique ID).",
           "acceptanceCriteria": "Given a path to a valid Docker build context, a Docker image is successfully built and tagged. Build logs are captured. Build failures are reported with relevant error messages.",
-          "status": "in-progress",
+          "status": "done",
           "dependencies": ["1.6"],
-          "updatedAt": "2024-06-01T14:05:00Z"
+          "updatedAt": "2024-06-01T14:30:00Z"
         }
       ]
     },
