@@ -38,3 +38,6 @@ Thumbs.db
 *.tfstate.backup
 crash.log
 terraform.tfvars
+
+# Workspaces
+workspaces/

@@ -4,7 +4,7 @@
     "version": "0.1.0",
     "prdSource": "prd.txt",
     "createdAt": "2024-06-01T12:00:00Z",
-    "updatedAt": "2024-06-01T12:25:00Z"
+    "updatedAt": "2024-06-01T14:30:00Z"
   },
   "tasks": [
     {
@@ -15,8 +15,8 @@
       "testStrategy": "Combination of unit tests for individual components (API routes, config loading, Git cloning), and integration tests for basic API request-response flow with Azure OpenAI. Manual E2E test: send a chat prompt, verify response.",
       "priority": "high",
       "dependencies": [],
-      "status": "pending",
-      "updatedAt": "2024-06-01T12:25:00Z",
+      "status": "done",
+      "updatedAt": "2024-06-01T13:35:00Z",
       "subtasks": [
         {
           "id": "1.1",
@@ -44,8 +44,9 @@
           "description": "Create the HTTP POST endpoint `/v1/chat/completions` that mimics the OpenAI API structure for receiving chat requests.",
           "details": "Define Pydantic models for request (`ChatCompletionRequest`) and response (`ChatCompletionResponse`, `ChatCompletionChunk`) bodies according to OpenAI specification. Implement basic request validation. Support streaming responses (`stream=true`).",
           "acceptanceCriteria": "Endpoint accepts valid JSON POST requests matching OpenAI format and returns a valid JSON response (or streams chunks). Invalid requests are handled with appropriate HTTP error codes (400, 422).",
-          "status": "pending",
-          "dependencies": ["1.1"]
+          "status": "done",
+          "dependencies": ["1.1"],
+          "updatedAt": "2024-06-01T12:35:00Z"
         },
         {
           "id": "1.4",
@@ -53,8 +54,9 @@
           "description": "Integrate with Azure OpenAI client library to forward processed chat messages and return responses via the API endpoint.",
           "details": "Use the `openai` library configured for Azure (API key, endpoint, API version from config). Implement logic to take incoming messages from the API, format them for Azure OpenAI, send the request, and return/stream the Azure OpenAI response. Handle API errors from Azure (e.g., authentication, rate limits).",
           "acceptanceCriteria": "A message sent to the `/v1/chat/completions` endpoint is successfully processed by Azure OpenAI, and its response is returned/streamed to the client.",
-          "status": "pending",
-          "dependencies": ["1.2", "1.3"]
+          "status": "done",
+          "dependencies": ["1.2", "1.3"],
+          "updatedAt": "2024-06-01T12:45:00Z"
         },
         {
           "id": "1.5",
@@ -62,8 +64,9 @@
           "description": "Set up structured logging (e.g., JSON format) across the application for better monitoring and debugging.",
           "details": "Use Python's `logging` module. Configure a JSON formatter (e.g., `python-json-logger`). Ensure logs include timestamp, level, message, module name, and relevant context (e.g., request ID if applicable). Log to stdout/stderr for containerized environments.",
           "acceptanceCriteria": "Application events (startup, requests, errors, significant operations) are logged in a structured JSON format. Log levels are configurable via environment variable.",
-          "status": "pending",
-          "dependencies": ["1.1"]
+          "status": "done",
+          "dependencies": ["1.1"],
+          "updatedAt": "2024-06-01T12:55:00Z"
         },
         {
           "id": "1.6",
@@ -71,8 +74,9 @@
           "description": "Create a module/service to clone a public GitHub repository given its URL into a temporary workspace.",
           "details": "Use `subprocess` to call `git clone` or a library like `GitPython`. Ensure the target directory is within a designated workspace. Handle errors like invalid URLs, non-existent repos, or network issues. Implement cleanup logic for temporary workspaces.",
           "acceptanceCriteria": "Given a valid public GitHub URL, the repository is cloned into a unique, temporary local directory. Errors are handled and reported. Workspace is cleaned up after processing or on error.",
-          "status": "pending",
-          "dependencies": ["1.1"]
+          "status": "done",
+          "dependencies": ["1.1"],
+          "updatedAt": "2024-06-01T13:05:00Z"
         },
         {
           "id": "1.7",
@@ -80,8 +84,9 @@
           "description": "Implement logic to read and parse `README.md` files from cloned repositories to heuristically identify build and run instructions.",
           "details": "Focus on common sections (e.g., 'Build', 'Installation', 'Usage', 'Running'). Use regex or simple string matching. If instructions are not found, this should be flagged. This is a best-effort parsing; advanced parsing can be a future enhancement.",
           "acceptanceCriteria": "For sample README files, the system can extract potential build/run commands or relevant sections. If no clear instructions are found, it indicates this. Handles missing README files gracefully.",
-          "status": "pending",
-          "dependencies": ["1.6"]
+          "status": "done",
+          "dependencies": ["1.6"],
+          "updatedAt": "2024-06-01T13:20:00Z"
         },
         {
           "id": "1.8",
@@ -89,8 +94,9 @@
           "description": "Check for the presence of a `Dockerfile` in the cloned repository. If found, read its content and perform minimal analysis.",
           "details": "Scan the root and common subdirectories for `Dockerfile`. If not found, report this (user might need to be prompted). Basic analysis: extract `EXPOSE` instructions, `CMD`/`ENTRYPOINT` if easily parseable.",
           "acceptanceCriteria": "Correctly identifies the presence or absence of a Dockerfile. Reads content if present. Extracts basic information like exposed ports if available.",
-          "status": "pending",
-          "dependencies": ["1.6"]
+          "status": "done",
+          "dependencies": ["1.6"],
+          "updatedAt": "2024-06-01T13:35:00Z"
         }
       ]
     },
@@ -102,7 +108,8 @@
       "testStrategy": "Unit tests for Dockerfile check functions. Integration test for building a sample Docker image. Manual test: provide a repo with a Dockerfile, verify checks are run and image is built.",
       "priority": "high",
       "dependencies": [1],
-      "status": "pending",
+      "status": "done",
+      "updatedAt": "2024-06-01T14:30:00Z",
       "subtasks": [
         {
           "id": "2.1",
@@ -110,8 +117,9 @@
           "description": "Develop a module to perform basic checks on a Dockerfile content for common best practice violations.",
           "details": "Checks to implement: use of `sudo`, presence of `apt-get update` without `apt-get clean`, use of fixed versions for base images, potential for caching issues, not running as root user (check for `USER` instruction). This can be rule-based or use a linter library if suitable.",
           "acceptanceCriteria": "Given a Dockerfile content, a list of potential issues or suggestions is generated. Passes for a known good Dockerfile.",
-          "status": "pending",
-          "dependencies": ["1.8"]
+          "status": "done",
+          "dependencies": ["1.8"],
+          "updatedAt": "2024-06-01T14:20:00Z"
         },
         {
           "id": "2.2",
@@ -119,8 +127,9 @@
           "description": "Implement a service to build a Docker image locally using the host's Docker daemon from a given build context (cloned repository path).",
           "details": "Use the Docker SDK for Python (`docker` library) or `subprocess` to call Docker CLI. Capture build logs. Handle build errors and report them clearly. Tag images appropriately (e.g., based on repo name and a unique ID).",
           "acceptanceCriteria": "Given a path to a valid Docker build context, a Docker image is successfully built and tagged. Build logs are captured. Build failures are reported with relevant error messages.",
-          "status": "pending",
-          "dependencies": ["1.6"]
+          "status": "done",
+          "dependencies": ["1.6"],
+          "updatedAt": "2024-06-01T14:30:00Z"
         }
       ]
     },

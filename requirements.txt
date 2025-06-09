@@ -4,3 +4,5 @@ pydantic
 python-dotenv
 openai
 pydantic-settings
+python-json-logger
+docker
