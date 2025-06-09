@@ -1,0 +1,68 @@
+# ec2_instance.tf.j2
+provider "aws" {
+  region = "{{ aws_region }}"
+}
+
+resource "aws_security_group" "ec2_sg" {
+  name        = "{{ sg_name }}"
+  description = "Allow SSH and application traffic for {{ instance_name_tag }}"
+
+  dynamic "ingress" {
+    for_each = var.app_ports_sg
+    content {
+      from_port   = ingress.value.port
+      to_port     = ingress.value.port
+      protocol    = ingress.value.protocol
+      cidr_blocks = ["0.0.0.0/0"] # Consider making this configurable
+    }
+  }
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = [ "{{ ssh_cidr | default("0.0.0.0/0") }}" ]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1" # All protocols
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "{{ sg_name }}"
+  }
+}
+
+resource "aws_instance" "ec2_for_kind" {
+  ami           = "{{ ami_id }}"
+  instance_type = "{{ instance_type }}"
+  key_name      = "{{ key_name }}" # User must ensure this key pair exists in AWS
+  vpc_security_group_ids = [aws_security_group.ec2_sg.id]
+  user_data     = {{ user_data_content | default(null) | tojson }} # Pass content directly, tojson for proper escaping
+
+  tags = {
+    Name = "{{ instance_name_tag }}"
+    MCP-Deployment = "cloud-local"
+  }
+}
+
+output "public_ip" {
+  value = aws_instance.ec2_for_kind.public_ip
+}
+
+output "instance_id" {
+  value = aws_instance.ec2_for_kind.id
+}
+
+# Define app_ports_sg variable, derived from app_ports context
+variable "app_ports_sg" {
+  description = "List of application ports to open in the security group"
+  type = list(object({
+    port     = number
+    protocol = string
+  }))
+  default = []
+}

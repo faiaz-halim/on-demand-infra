@@ -4,7 +4,7 @@
     "version": "0.1.0",
     "prdSource": "prd.txt",
     "createdAt": "2024-06-01T12:00:00Z",
-    "updatedAt": "2024-06-01T15:05:00Z"
+    "updatedAt": "2024-06-01T15:10:00Z"
   },
   "tasks": [
     {
@@ -237,7 +237,8 @@
       "testStrategy": "Unit tests for Terraform code generation. Test generated Terraform code against AWS (sandboxed environment) to ensure EC2 instances are provisioned and configured correctly. Verify prerequisites are installed on EC2.",
       "priority": "medium-high",
       "dependencies": [4, "3.5"],
-      "status": "pending",
+      "status": "done",
+      "updatedAt": "2024-06-01T15:10:00Z",
       "subtasks": [
         {
           "id": "5.1",
@@ -245,8 +246,9 @@
           "description": "Develop Terraform code (or use a templating engine to generate it) for provisioning an AWS EC2 instance with specified size (e.g., t3.medium, user-configurable), appropriate AMI (e.g., Amazon Linux 2), and key pair (user to manage key pair).",
           "details": "Include Security Group configuration to allow SSH and application ports. Output EC2 instance public IP/DNS.",
           "acceptanceCriteria": "Terraform code successfully provisions an EC2 instance with the correct size, AMI, and security group settings. Public IP is accessible.",
-          "status": "pending",
-          "dependencies": ["4.2"]
+          "status": "done",
+          "dependencies": ["4.2"],
+          "updatedAt": "2024-06-01T15:10:00Z"
         },
         {
           "id": "5.2",
@@ -254,8 +256,9 @@
           "description": "Create scripts (e.g., bash) to be used as EC2 user-data or by Terraform provisioners (remote-exec) to install Docker, Kind, Calico CNI, and any other required tools on the provisioned EC2 instance.",
           "details": "Ensure scripts are idempotent if possible. Verify installation of specific versions if required.",
           "acceptanceCriteria": "After EC2 provisioning, Docker, Kind, and Calico are installed and operational on the instance.",
-          "status": "pending",
-          "dependencies": ["5.1"]
+          "status": "done",
+          "dependencies": ["5.1"],
+          "updatedAt": "2024-06-01T15:10:00Z"
         },
         {
           "id": "5.3",
@@ -263,8 +266,9 @@
           "description": "Implement logic to invoke `terraform apply` for the generated EC2 provisioning modules and capture output (like public IP).",
           "details": "Use `python-terraform` library or `subprocess` to run Terraform CLI commands (`init`, `apply`, `destroy`). Manage Terraform state (local or remote backend like S3, TBD).",
           "acceptanceCriteria": "The MCP server can successfully execute Terraform to create the EC2 environment. EC2 public IP is captured.",
-          "status": "pending",
-          "dependencies": ["5.1", "5.2"]
+          "status": "done",
+          "dependencies": ["5.1", "5.2"],
+          "updatedAt": "2024-06-01T15:10:00Z"
         }
       ]
     },

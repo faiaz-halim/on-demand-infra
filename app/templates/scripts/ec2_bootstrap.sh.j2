@@ -1,0 +1,46 @@
+#!/bin/bash
+set -e # Exit immediately if a command exits with a non-zero status.
+exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1 # Log to user-data.log and console
+
+echo "Starting EC2 bootstrap script..."
+
+# Update and install basic packages
+sudo yum update -y
+sudo yum install -y curl unzip git
+
+# Install Docker
+echo "Installing Docker..."
+sudo amazon-linux-extras install docker -y
+sudo systemctl start docker
+sudo systemctl enable docker
+sudo usermod -a -G docker ec2-user
+echo "Docker installed and configured."
+
+# Install Kind
+echo "Installing Kind v{{ kind_version | default('0.23.0') }}..."
+KIND_VERSION="{{ kind_version | default('0.23.0') }}"
+curl -Lo ./kind https://kind.sigs.k8s.io/dl/v${KIND_VERSION}/kind-linux-amd64
+sudo chmod +x ./kind
+sudo mv ./kind /usr/local/bin/kind
+echo "Kind v${KIND_VERSION} installed."
+
+# Install kubectl
+echo "Installing kubectl v{{ kubectl_version | default('1.30.0') }}..."
+KUBECTL_VERSION="{{ kubectl_version | default('1.30.0') }}"
+curl -Lo kubectl "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+sudo chmod +x kubectl
+sudo mv kubectl /usr/local/bin/kubectl
+echo "kubectl v${KUBECTL_VERSION} installed."
+
+# Calico CNI for Kind (will be applied by Kind config or MCP later)
+# For now, ensure kubectl is ready. If Calico needs specific tools, add here.
+# The Kind cluster config itself can specify Calico CNI.
+# Alternative: Download calico.yaml if a specific version is needed for `kubectl apply` later
+# CALICO_MANIFEST_URL="{{ calico_manifest_url | default('https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/calico.yaml') }}"
+# echo "Downloading Calico manifest from ${CALICO_MANIFEST_URL}..."
+# curl -Lo /tmp/calico.yaml ${CALICO_MANIFEST_URL}
+# echo "Calico manifest downloaded to /tmp/calico.yaml."
+
+echo "EC2 bootstrap script completed."
+# Docker group membership might require a logout/login or new shell to take effect for ec2-user.
+# For immediate effect for scripts run by user-data, newgrp docker can be used, or run docker commands with sudo.

@@ -37,8 +37,10 @@ class ChatCompletionRequest(BaseModel):
     deployment_mode: Optional[Literal["local", "cloud-local", "cloud-hosted"]] = Field(default="local", description="The desired deployment mode.")
     aws_credentials: Optional[AWSCredentials] = Field(default=None, description="AWS credentials, required for cloud-local and cloud-hosted modes.")
     target_namespace: Optional[str] = Field(default="default", description="Target Kubernetes namespace for the deployment.")
-    # Add other deployment-specific parameters as needed, e.g.:
-    # instance_size: Optional[str] = Field(default=None, description="EC2 instance size for cloud-local mode.")
+
+    # Cloud-local specific parameters
+    ec2_key_name: Optional[str] = Field(default=None, description="Name of the EC2 key pair to use for SSH access. Required for cloud-local mode if not set in server defaults.")
+    # instance_size: Optional[str] = Field(default=None, description="EC2 instance size for cloud-local mode. Overrides server default.")
     # application_environment_variables: Optional[Dict[str, str]] = Field(default_factory=dict, description="Environment variables for the application.")
 
 
