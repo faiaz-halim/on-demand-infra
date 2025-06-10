@@ -47,8 +47,24 @@ class Settings(BaseSettings):
     EC2_DEFAULT_REPO_PATH: str = "/home/ec2-user/app_repo"
     EC2_DEFAULT_REMOTE_MANIFEST_PATH: str = "/tmp/mcp_manifests"
 
+    # EKS Default settings for Cloud-Hosted
+    EKS_DEFAULT_VERSION: str = "1.29"
+    EKS_DEFAULT_NODE_INSTANCE_TYPE: str = "t3.medium"
+    EKS_DEFAULT_NODE_DESIRED_SIZE: int = 1 # Renamed from EKS_DEFAULT_NODE_DESIRED_COUNT and value changed
+    EKS_DEFAULT_NODE_MIN_SIZE: int = 1 # Renamed from EKS_DEFAULT_NODE_MIN_COUNT
+    EKS_DEFAULT_NODE_MAX_SIZE: int = 2 # Renamed from EKS_DEFAULT_NODE_MAX_COUNT and value changed
+    EKS_DEFAULT_VPC_CIDR: str = "10.0.0.0/16"
+    EKS_DEFAULT_NUM_PUBLIC_SUBNETS: int = 2
+    EKS_DEFAULT_NUM_PRIVATE_SUBNETS: int = 2
+    EKS_DEFAULT_CLUSTER_NAME_PREFIX: str = "mcp-eks"
+    EKS_DEFAULT_NODE_GROUP_NAME_SUFFIX: str = "ng-default"
+
+    # ECR Defaults
+    ECR_DEFAULT_IMAGE_TAG_MUTABILITY: str = "MUTABLE"
+    ECR_DEFAULT_SCAN_ON_PUSH: bool = True
+    ECR_DEFAULT_REPO_NAME_PREFIX: str = "mcp-app"
+
     # Persistent workspace for Terraform states, etc.
-    # Ensure this directory exists and is writable by the application.
     PERSISTENT_WORKSPACE_BASE_DIR: str = "/app/mcp_workspaces"
 
 

@@ -15,6 +15,8 @@ from app.services.terraform_service import (
     generate_kind_config_yaml,
     generate_ec2_tf_config,
     generate_ec2_bootstrap_script,
+    generate_eks_tf_config, # Added for EKS tests
+    generate_ecr_tf_config, # Added for ECR tests
     run_terraform_init,       # Added
     run_terraform_apply,      # Added
     run_terraform_destroy,    # Added
@@ -22,6 +24,7 @@ from app.services.terraform_service import (
 )
 # Access the configured Jinja2 environment from the service to mock its methods if needed
 from app.services import terraform_service as ts # For mocking ts.jinja_env
+from app.core.config import settings # Added for EKS tests to access defaults
 
 # Configure basic logging for test visibility
 logging.basicConfig(level=logging.INFO)
@@ -361,15 +364,234 @@ class TestTerraformService(unittest.TestCase):
         self.assertEqual(stderr, "Terraform CLI not found.")
         mock_subprocess_run.assert_not_called() # subprocess.run in _run_terraform_command should not be called
 
+    # --- Tests for generate_eks_tf_config ---
+
+    def test_generate_eks_tf_config_success_basic_defaults(self):
+        logger.info("Testing generate_eks_tf_config_success_basic_defaults...")
+        context = {
+            "aws_region": "us-west-2",
+            "cluster_name": "test-eks-cluster"
+        }
+        with tempfile.TemporaryDirectory() as temp_dir_path:
+            tf_file_path = generate_eks_tf_config(context.copy(), temp_dir_path)
+
+            self.assertIsNotNone(tf_file_path, "Should return a path string on success.")
+            output_file = pathlib.Path(tf_file_path)
+            self.assertTrue(output_file.exists(), f"Output file {output_file} should exist.")
+
+            with open(output_file, 'r') as f:
+                file_content = f.read()
+                hcl_data = hcl2.parser.parse(file_content)
+
+            # Provider and Region
+            self.assertIn('provider "aws"', file_content)
+            self.assertIn(f'region = "{context["aws_region"]}"', file_content)
+
+            # VPC CIDR
+            vpc_resource = hcl_data['resource'][0]['aws_vpc']['eks_vpc']
+            self.assertEqual(vpc_resource['cidr_block'], settings.EKS_DEFAULT_VPC_CIDR)
+            self.assertIn(context["cluster_name"], vpc_resource['tags']['Name'])
+
+
+            # EKS Cluster version
+            eks_cluster_resource = hcl_data['resource'][0]['aws_eks_cluster']['eks_cluster']
+            self.assertEqual(eks_cluster_resource['name'], context["cluster_name"])
+            self.assertEqual(eks_cluster_resource['version'], settings.EKS_DEFAULT_VERSION)
+
+            # Node group instance type and scaling config
+            node_group_resource = hcl_data['resource'][0]['aws_eks_node_group']['node_group']
+            self.assertEqual(node_group_resource['instance_types'], [settings.EKS_DEFAULT_NODE_INSTANCE_TYPE])
+            self.assertEqual(node_group_resource['scaling_config'][0]['desired_size'], settings.EKS_DEFAULT_NODE_DESIRED_SIZE)
+            self.assertEqual(node_group_resource['scaling_config'][0]['min_size'], settings.EKS_DEFAULT_NODE_MIN_SIZE)
+            self.assertEqual(node_group_resource['scaling_config'][0]['max_size'], settings.EKS_DEFAULT_NODE_MAX_SIZE)
+            expected_ng_name = f"{context['cluster_name']}-{settings.EKS_DEFAULT_NODE_GROUP_NAME_SUFFIX}"
+            self.assertEqual(node_group_resource['node_group_name'], expected_ng_name)
+
+
+            # Check number of subnets
+            public_subnets = [res for res_type in hcl_data['resource'] for res_name, res_config in res_type.items() if res_name == 'aws_subnet' and 'public_subnet' in res_config[0]]
+            private_subnets = [res for res_type in hcl_data['resource'] for res_name, res_config in res_type.items() if res_name == 'aws_subnet' and 'private_subnet' in res_config[0]]
+            self.assertEqual(len(public_subnets), settings.EKS_DEFAULT_NUM_PUBLIC_SUBNETS)
+            self.assertEqual(len(private_subnets), settings.EKS_DEFAULT_NUM_PRIVATE_SUBNETS)
+        logger.info("test_generate_eks_tf_config_success_basic_defaults passed.")
+
+    def test_generate_eks_tf_config_success_with_overrides(self):
+        logger.info("Testing generate_eks_tf_config_success_with_overrides...")
+        context = {
+            "aws_region": "eu-central-1",
+            "cluster_name": "custom-eks",
+            "vpc_cidr": "192.168.0.0/16",
+            "num_public_subnets": 3,
+            "num_private_subnets": 3,
+            "eks_version": "1.28",
+            "node_group_name": "custom-ng",
+            "node_instance_type": "m5.large",
+            "node_desired_size": 3,
+            "node_min_size": 2,
+            "node_max_size": 5
+        }
+        with tempfile.TemporaryDirectory() as temp_dir_path:
+            tf_file_path = generate_eks_tf_config(context.copy(), temp_dir_path)
+            self.assertIsNotNone(tf_file_path)
+            with open(pathlib.Path(tf_file_path), 'r') as f:
+                file_content = f.read()
+                hcl_data = hcl2.parser.parse(file_content)
+
+            self.assertIn(f'region = "{context["aws_region"]}"', file_content)
+
+            vpc_resource = hcl_data['resource'][0]['aws_vpc']['eks_vpc']
+            self.assertEqual(vpc_resource['cidr_block'], context['vpc_cidr'])
+            self.assertIn(context["cluster_name"], vpc_resource['tags']['Name'])
+
+            eks_cluster_resource = hcl_data['resource'][0]['aws_eks_cluster']['eks_cluster']
+            self.assertEqual(eks_cluster_resource['name'], context["cluster_name"])
+            self.assertEqual(eks_cluster_resource['version'], context['eks_version'])
+
+            node_group_resource = hcl_data['resource'][0]['aws_eks_node_group']['node_group']
+            self.assertEqual(node_group_resource['instance_types'], [context['node_instance_type']])
+            self.assertEqual(node_group_resource['scaling_config'][0]['desired_size'], context['node_desired_size'])
+            self.assertEqual(node_group_resource['scaling_config'][0]['min_size'], context['node_min_size'])
+            self.assertEqual(node_group_resource['scaling_config'][0]['max_size'], context['node_max_size'])
+            self.assertEqual(node_group_resource['node_group_name'], context['node_group_name'])
+
+            public_subnets = [res for res_type in hcl_data['resource'] for res_name, res_config in res_type.items() if res_name == 'aws_subnet' and 'public_subnet' in res_config[0]]
+            private_subnets = [res for res_type in hcl_data['resource'] for res_name, res_config in res_type.items() if res_name == 'aws_subnet' and 'private_subnet' in res_config[0]]
+            self.assertEqual(len(public_subnets), context['num_public_subnets'])
+            self.assertEqual(len(private_subnets), context['num_private_subnets'])
+        logger.info("test_generate_eks_tf_config_success_with_overrides passed.")
+
+    def test_generate_eks_tf_config_missing_required_context(self):
+        logger.info("Testing generate_eks_tf_config_missing_required_context...")
+        # Missing 'cluster_name'
+        context_missing_cluster = {"aws_region": "us-east-1"}
+        with tempfile.TemporaryDirectory() as temp_dir_path:
+            with self.assertLogs(logger='app.services.terraform_service', level='ERROR') as log_watcher:
+                returned_path_str = generate_eks_tf_config(context_missing_cluster, temp_dir_path)
+        self.assertIsNone(returned_path_str)
+        self.assertTrue(any("Missing one or more required keys in context for EKS TF config: cluster_name" in msg for msg in log_watcher.output))
+
+        # Missing 'aws_region'
+        context_missing_region = {"cluster_name": "test-cluster"}
+        with tempfile.TemporaryDirectory() as temp_dir_path:
+            with self.assertLogs(logger='app.services.terraform_service', level='ERROR') as log_watcher:
+                returned_path_str = generate_eks_tf_config(context_missing_region, temp_dir_path)
+        self.assertIsNone(returned_path_str)
+        self.assertTrue(any("Missing one or more required keys in context for EKS TF config: aws_region" in msg for msg in log_watcher.output))
+        logger.info("test_generate_eks_tf_config_missing_required_context passed.")
+
+    @patch.object(ts, 'jinja_env')
+    def test_generate_eks_tf_config_template_not_found(self, mock_jinja_env):
+        logger.info("Testing generate_eks_tf_config_template_not_found...")
+        mock_jinja_env.get_template.side_effect = jinja2.TemplateNotFound("terraform/aws/eks_cluster.tf.j2")
+        context = {"aws_region": "us-east-1", "cluster_name": "test-cluster"}
+        with tempfile.TemporaryDirectory() as temp_dir_path:
+            with self.assertLogs(logger='app.services.terraform_service', level='ERROR') as log_watcher:
+                returned_path_str = generate_eks_tf_config(context, temp_dir_path)
+        self.assertIsNone(returned_path_str)
+        self.assertTrue(any("Template 'terraform/aws/eks_cluster.tf.j2' not found" in msg for msg in log_watcher.output))
+        logger.info("test_generate_eks_tf_config_template_not_found passed.")
+
+    # --- Tests for generate_ecr_tf_config ---
+
+    def test_generate_ecr_tf_config_success_basic_defaults(self):
+        logger.info("Testing generate_ecr_tf_config_success_basic_defaults...")
+        context = {
+            "aws_region": "us-east-1",
+            "ecr_repo_name": "test-my-app"
+        }
+        with tempfile.TemporaryDirectory() as temp_dir_path:
+            tf_file_path = generate_ecr_tf_config(context.copy(), temp_dir_path)
+
+            self.assertIsNotNone(tf_file_path, "Should return a path string on success.")
+            output_file = pathlib.Path(tf_file_path)
+            self.assertTrue(output_file.exists(), f"Output file {output_file} should exist.")
+
+            with open(output_file, 'r') as f:
+                file_content = f.read()
+                hcl_data = hcl2.parser.parse(file_content)
+
+            self.assertIn(f'region = "{context["aws_region"]}"', file_content)
+
+            ecr_repo_resource = hcl_data['resource'][0]['aws_ecr_repository']['ecr_repo']
+            self.assertEqual(ecr_repo_resource['name'], context["ecr_repo_name"])
+            self.assertEqual(ecr_repo_resource['image_tag_mutability'], settings.ECR_DEFAULT_IMAGE_TAG_MUTABILITY)
+
+            # HCL boolean is not quoted, template uses |lower so True becomes true
+            expected_scan_on_push_str = str(settings.ECR_DEFAULT_SCAN_ON_PUSH).lower()
+            self.assertEqual(ecr_repo_resource['image_scanning_configuration'][0]['scan_on_push'], expected_scan_on_push_str)
+
+            self.assertIn('output "ecr_repository_url"', file_content)
+            self.assertIn('output "ecr_repository_name"', file_content)
+        logger.info("test_generate_ecr_tf_config_success_basic_defaults passed.")
+
+    def test_generate_ecr_tf_config_success_with_overrides(self):
+        logger.info("Testing generate_ecr_tf_config_success_with_overrides...")
+        context = {
+            "aws_region": "eu-west-1",
+            "ecr_repo_name": "custom-repo",
+            "image_tag_mutability": "IMMUTABLE",
+            "scan_on_push": False  # Note: Python False, template converts to 'false'
+        }
+        with tempfile.TemporaryDirectory() as temp_dir_path:
+            tf_file_path = generate_ecr_tf_config(context.copy(), temp_dir_path)
+            self.assertIsNotNone(tf_file_path)
+            with open(pathlib.Path(tf_file_path), 'r') as f:
+                file_content = f.read()
+                hcl_data = hcl2.parser.parse(file_content)
+
+            self.assertIn(f'region = "{context["aws_region"]}"', file_content)
+            ecr_repo_resource = hcl_data['resource'][0]['aws_ecr_repository']['ecr_repo']
+            self.assertEqual(ecr_repo_resource['name'], context["ecr_repo_name"])
+            self.assertEqual(ecr_repo_resource['image_tag_mutability'], context["image_tag_mutability"])
+            self.assertEqual(ecr_repo_resource['image_scanning_configuration'][0]['scan_on_push'], str(context["scan_on_push"]).lower())
+        logger.info("test_generate_ecr_tf_config_success_with_overrides passed.")
+
+    def test_generate_ecr_tf_config_missing_required_context(self):
+        logger.info("Testing generate_ecr_tf_config_missing_required_context...")
+        # Missing 'ecr_repo_name'
+        context_missing_repo = {"aws_region": "us-east-1"}
+        with tempfile.TemporaryDirectory() as temp_dir_path:
+            with self.assertLogs(logger='app.services.terraform_service', level='ERROR') as log_watcher:
+                returned_path_str = generate_ecr_tf_config(context_missing_repo, temp_dir_path)
+        self.assertIsNone(returned_path_str)
+        self.assertTrue(any("Missing required key 'ecr_repo_name' in context for generating ECR Terraform config." in msg for msg in log_watcher.output))
+
+        # Missing 'aws_region'
+        context_missing_region = {"ecr_repo_name": "test-repo"}
+        with tempfile.TemporaryDirectory() as temp_dir_path:
+            with self.assertLogs(logger='app.services.terraform_service', level='ERROR') as log_watcher:
+                returned_path_str = generate_ecr_tf_config(context_missing_region, temp_dir_path)
+        self.assertIsNone(returned_path_str)
+        self.assertTrue(any("Missing required key 'aws_region' in context for generating ECR Terraform config." in msg for msg in log_watcher.output))
+        logger.info("test_generate_ecr_tf_config_missing_required_context passed.")
+
+    @patch.object(ts, 'jinja_env')
+    def test_generate_ecr_tf_config_template_not_found(self, mock_jinja_env):
+        logger.info("Testing generate_ecr_tf_config_template_not_found...")
+        mock_jinja_env.get_template.side_effect = jinja2.TemplateNotFound("terraform/aws/ecr_repository.tf.j2")
+        context = {"aws_region": "us-east-1", "ecr_repo_name": "test-repo"}
+        with tempfile.TemporaryDirectory() as temp_dir_path:
+            with self.assertLogs(logger='app.services.terraform_service', level='ERROR') as log_watcher:
+                returned_path_str = generate_ecr_tf_config(context, temp_dir_path)
+        self.assertIsNone(returned_path_str)
+        self.assertTrue(any("Template 'terraform/aws/ecr_repository.tf.j2' not found" in msg for msg in log_watcher.output))
+        logger.info("test_generate_ecr_tf_config_template_not_found passed.")
+
 
 if __name__ == '__main__':
     expected_kind_template = ts.TEMPLATE_BASE_DIR / "kind/kind-config.yaml.j2"
     expected_ec2_template = ts.TEMPLATE_BASE_DIR / "terraform/aws/ec2_instance.tf.j2"
+    expected_eks_template = ts.TEMPLATE_BASE_DIR / "terraform/aws/eks_cluster.tf.j2" # Added for check
+    expected_ecr_template = ts.TEMPLATE_BASE_DIR / "terraform/aws/ecr_repository.tf.j2" # Added for check
     expected_script_template = ts.TEMPLATE_BASE_DIR / "scripts/ec2_bootstrap.sh.j2"
     if not expected_kind_template.exists():
         logger.warning(f"Kind template {expected_kind_template} not found.")
     if not expected_ec2_template.exists():
         logger.warning(f"EC2 TF template {expected_ec2_template} not found.")
+    if not expected_eks_template.exists(): # Added for check
+        logger.warning(f"EKS TF template {expected_eks_template} not found.")
+    if not expected_ecr_template.exists(): # Added for check
+        logger.warning(f"ECR TF template {expected_ecr_template} not found.")
     if not expected_script_template.exists():
         logger.warning(f"EC2 Bootstrap Script template {expected_script_template} not found.")
     unittest.main()

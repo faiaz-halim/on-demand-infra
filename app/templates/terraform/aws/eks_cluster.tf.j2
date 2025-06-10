@@ -1,0 +1,201 @@
+# eks_cluster.tf.j2
+# Provider and Region
+provider "aws" {
+  region = "{{ aws_region }}"
+}
+
+data "aws_availability_zones" "available" {}
+
+# VPC
+resource "aws_vpc" "eks_vpc" {
+  cidr_block           = "{{ vpc_cidr | default("10.0.0.0/16") }}"
+  enable_dns_support   = true
+  enable_dns_hostnames = true
+  tags = {
+    Name = "{{ cluster_name }}-vpc"
+    "kubernetes.io/cluster/{{ cluster_name }}" = "shared"
+  }
+}
+
+# Public Subnets
+{% set num_public_subnets_val = num_public_subnets | default(2) %}
+{% for i in range(num_public_subnets_val) %}
+resource "aws_subnet" "public_subnet_{{ i }}" {
+  vpc_id                  = aws_vpc.eks_vpc.id
+  cidr_block              = cidrsubnet(aws_vpc.eks_vpc.cidr_block, 8, {{ i }})
+  availability_zone       = data.aws_availability_zones.available.names[{{ i % data.aws_availability_zones.available.names | length }}]
+  map_public_ip_on_launch = true
+  tags = {
+    Name = "{{ cluster_name }}-public-subnet-{{ i }}"
+    "kubernetes.io/cluster/{{ cluster_name }}" = "shared"
+    "kubernetes.io/role/elb"                  = "1"
+  }
+}
+{% endfor %}
+
+# Private Subnets
+{% set num_private_subnets_val = num_private_subnets | default(2) %}
+{% for i in range(num_private_subnets_val) %}
+resource "aws_subnet" "private_subnet_{{ i }}" {
+  vpc_id            = aws_vpc.eks_vpc.id
+  cidr_block        = cidrsubnet(aws_vpc.eks_vpc.cidr_block, 8, {{ i + num_public_subnets_val }})
+  availability_zone = data.aws_availability_zones.available.names[{{ i % data.aws_availability_zones.available.names | length }}]
+  tags = {
+    Name = "{{ cluster_name }}-private-subnet-{{ i }}"
+    "kubernetes.io/cluster/{{ cluster_name }}" = "shared"
+    "kubernetes.io/role/internal-elb"         = "1"
+  }
+}
+{% endfor %}
+
+# Internet Gateway
+resource "aws_internet_gateway" "igw" {
+  vpc_id = aws_vpc.eks_vpc.id
+  tags = {
+    Name = "{{ cluster_name }}-igw"
+  }
+}
+
+# Public Route Table
+resource "aws_route_table" "public_rt" {
+  vpc_id = aws_vpc.eks_vpc.id
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.igw.id
+  }
+  tags = {
+    Name = "{{ cluster_name }}-public-rt"
+  }
+}
+{% for i in range(num_public_subnets_val) %}
+resource "aws_route_table_association" "public_rt_assoc_{{ i }}" {
+  subnet_id      = aws_subnet.public_subnet_{{ i }}.id
+  route_table_id = aws_route_table.public_rt.id
+}
+{% endfor %}
+
+# EIP and NAT Gateway
+resource "aws_eip" "nat_eip" {
+  domain   = "vpc"
+  depends_on = [aws_internet_gateway.igw]
+  tags = {
+    Name = "{{ cluster_name }}-nat-eip"
+  }
+}
+
+resource "aws_nat_gateway" "nat_gw" {
+  allocation_id = aws_eip.nat_eip.id
+  subnet_id     = aws_subnet.public_subnet_0.id # Assumes at least one public subnet
+  depends_on    = [aws_internet_gateway.igw]
+  tags = {
+    Name = "{{ cluster_name }}-nat-gw"
+  }
+}
+
+# Private Route Table
+resource "aws_route_table" "private_rt" {
+  vpc_id = aws_vpc.eks_vpc.id
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.nat_gw.id
+  }
+  tags = {
+    Name = "{{ cluster_name }}-private-rt"
+  }
+}
+{% for i in range(num_private_subnets_val) %}
+resource "aws_route_table_association" "private_rt_assoc_{{ i }}" {
+  subnet_id      = aws_subnet.private_subnet_{{ i }}.id
+  route_table_id = aws_route_table.private_rt.id
+}
+{% endfor %}
+
+# IAM Role for EKS Cluster
+resource "aws_iam_role" "eks_cluster_role" {
+  name = "{{ cluster_name }}-eks-cluster-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = { Service = "eks.amazonaws.com" }
+    }]
+  })
+}
+resource "aws_iam_role_policy_attachment" "eks_cluster_AmazonEKSClusterPolicy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+  role       = aws_iam_role.eks_cluster_role.name
+}
+
+# IAM Role for EKS Node Group
+resource "aws_iam_role" "eks_node_group_role" {
+  name = "{{ cluster_name }}-eks-node-group-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = { Service = "ec2.amazonaws.com" }
+    }]
+  })
+}
+resource "aws_iam_role_policy_attachment" "eks_node_AmazonEKSWorkerNodePolicy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+  role       = aws_iam_role.eks_node_group_role.name
+}
+resource "aws_iam_role_policy_attachment" "eks_node_AmazonEC2ContainerRegistryReadOnly" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+  role       = aws_iam_role.eks_node_group_role.name
+}
+resource "aws_iam_role_policy_attachment" "eks_node_AmazonEKS_CNI_Policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+  role       = aws_iam_role.eks_node_group_role.name
+}
+
+# EKS Cluster
+resource "aws_eks_cluster" "eks_cluster" {
+  name     = "{{ cluster_name }}"
+  role_arn = aws_iam_role.eks_cluster_role.arn
+  version  = "{{ eks_version | default("1.29") }}"
+
+  vpc_config {
+    subnet_ids              = distinct(concat([for subnet in aws_subnet.public_subnet[*] : subnet.id], [for subnet in aws_subnet.private_subnet[*] : subnet.id]))
+    public_access_cidrs     = ["0.0.0.0/0"]
+    # endpoint_private_access = false # Default, can be configurable
+    # endpoint_public_access  = true  # Default, can be configurable
+  }
+  depends_on = [
+    aws_iam_role_policy_attachment.eks_cluster_AmazonEKSClusterPolicy,
+  ]
+  tags = { Name = "{{ cluster_name }}" }
+}
+
+# EKS Managed Node Group
+resource "aws_eks_node_group" "node_group" {
+  cluster_name    = aws_eks_cluster.eks_cluster.name
+  node_group_name = "{{ node_group_name | default(cluster_name ~ "-ng-default") }}"
+  node_role_arn   = aws_iam_role.eks_node_group_role.arn
+  subnet_ids      = [for subnet in aws_subnet.private_subnet[*] : subnet.id] # Node groups in private subnets
+
+  instance_types = ["{{ node_instance_type | default("t3.medium") }}"]
+  scaling_config {
+    desired_size = {{ node_desired_size | default(1) }} # Reduced default for cost
+    min_size     = {{ node_min_size | default(1) }}
+    max_size     = {{ node_max_size | default(2) }} # Reduced default for cost
+  }
+  update_config { max_unavailable = 1 }
+  depends_on = [
+    aws_iam_role_policy_attachment.eks_node_AmazonEKSWorkerNodePolicy,
+    aws_iam_role_policy_attachment.eks_node_AmazonEC2ContainerRegistryReadOnly,
+    aws_iam_role_policy_attachment.eks_node_AmazonEKS_CNI_Policy,
+  ]
+  tags = { Name = "{{ node_group_name | default(cluster_name ~ "-ng-default") }}" }
+}
+
+# Outputs
+output "eks_cluster_endpoint" { value = aws_eks_cluster.eks_cluster.endpoint }
+output "eks_cluster_ca_data" { value = aws_eks_cluster.eks_cluster.certificate_authority[0].data }
+output "eks_node_group_iam_role_arn" { value = aws_iam_role.eks_node_group_role.arn }
+output "vpc_id" { value = aws_vpc.eks_vpc.id }
+output "public_subnet_ids" { value = [for subnet in aws_subnet.public_subnet[*] : subnet.id] }
+output "private_subnet_ids" { value = [for subnet in aws_subnet.private_subnet[*] : subnet.id] }

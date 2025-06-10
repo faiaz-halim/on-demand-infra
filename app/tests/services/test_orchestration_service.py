@@ -249,12 +249,227 @@ class TestOrchestrationService(unittest.IsolatedAsyncioTestCase):
 
 
     # ... (other existing tests like test_handle_cloud_hosted_deployment_placeholder)
-    @patch('app.services.orchestration_service.logger')
-    async def test_handle_cloud_hosted_deployment_placeholder(self, mock_orch_logger):
-        # ... (This test remains the same as before) ...
-        mock_chat_request = ChatCompletionRequest(messages=[ChatMessage(role="user", content="Deploy cloud-hosted")])
-        response_dict = await handle_cloud_hosted_deployment(self.repo_url, self.namespace, self.aws_creds, mock_chat_request)
-        self.assertEqual(response_dict["status"], "pending_feature")
+    # Note: The 'test_handle_cloud_hosted_deployment_placeholder' might need to be removed or updated
+    # if the actual implementation is no longer a placeholder. For now, adding new detailed tests.
+
+    @patch('app.services.orchestration_service.terraform_service.run_terraform_apply')
+    @patch('app.services.orchestration_service.terraform_service.run_terraform_init')
+    @patch('app.services.orchestration_service.terraform_service.generate_eks_tf_config')
+    @patch('app.services.orchestration_service.terraform_service.generate_ecr_tf_config')
+    @patch('app.services.orchestration_service.uuid.uuid4')
+    @patch('app.services.orchestration_service.pathlib.Path') # To mock workspace path creation/checks
+    @patch('app.services.orchestration_service.settings') # Mock settings directly used in the function
+    async def test_handle_cloud_hosted_deployment_success(
+        self, mock_settings, mock_pathlib_Path, mock_uuid4,
+        mock_generate_ecr_tf_config, mock_generate_eks_tf_config,
+        mock_run_terraform_init, mock_run_terraform_apply
+    ):
+        # Setup mocked settings values
+        mock_settings.PERSISTENT_WORKSPACE_BASE_DIR = self.test_persistent_workspaces
+        mock_settings.EKS_DEFAULT_CLUSTER_NAME_PREFIX = "mcp-eks-test"
+        mock_settings.ECR_DEFAULT_REPO_NAME_PREFIX = "mcp-app-test"
+        mock_settings.EKS_DEFAULT_VPC_CIDR = "10.1.0.0/16" # Example different from prod defaults
+        mock_settings.EKS_DEFAULT_NUM_PUBLIC_SUBNETS = 1
+        mock_settings.EKS_DEFAULT_NUM_PRIVATE_SUBNETS = 1
+        mock_settings.EKS_DEFAULT_VERSION = "1.27"
+        mock_settings.EKS_DEFAULT_NODE_GROUP_NAME_SUFFIX = "ng-custom"
+        mock_settings.EKS_DEFAULT_NODE_INSTANCE_TYPE = "t3.small"
+        mock_settings.EKS_DEFAULT_NODE_DESIRED_SIZE = 1
+        mock_settings.EKS_DEFAULT_NODE_MIN_SIZE = 1
+        mock_settings.EKS_DEFAULT_NODE_MAX_SIZE = 1
+        mock_settings.ECR_DEFAULT_IMAGE_TAG_MUTABILITY = "IMMUTABLE"
+        mock_settings.ECR_DEFAULT_SCAN_ON_PUSH = False
+
+        mock_uuid4.return_value.hex = "testuuid"
+
+        mock_path_instance = MagicMock()
+        mock_pathlib_Path.return_value = mock_path_instance # Return the same mock for all Path() calls
+
+        mock_generate_ecr_tf_config.return_value = str(mock_path_instance / "test_ecr.tf")
+        mock_generate_eks_tf_config.return_value = str(mock_path_instance / "test_eks.tf")
+        mock_run_terraform_init.return_value = (True, "init_success_stdout", "")
+
+        mock_tf_outputs = {
+            "ecr_repository_url": {"value": "test_ecr_url_output"},
+            "ecr_repository_name": {"value": "mcp-app-test-repo-testuuid"},
+            "eks_cluster_endpoint": {"value": "test_eks_ep_output"},
+            "eks_cluster_ca_data": {"value": "test_ca_data"},
+            "vpc_id": {"value": "vpc-12345"}
+        }
+        mock_run_terraform_apply.return_value = (True, mock_tf_outputs, "apply_stdout", "")
+
+        chat_request = ChatCompletionRequest(messages=[ChatMessage(role="user", content="deploy cloud hosted")])
+
+        response = await handle_cloud_hosted_deployment(
+            self.repo_url, self.namespace, self.aws_creds, chat_request
+        )
+
+        expected_repo_name_part = "repo" # from self.repo_url
+        expected_cluster_name = f"{mock_settings.EKS_DEFAULT_CLUSTER_NAME_PREFIX}-{expected_repo_name_part}-testuuid"
+        expected_ecr_repo_name_raw = f"{mock_settings.ECR_DEFAULT_REPO_NAME_PREFIX}-{expected_repo_name_part}-testuuid"
+        # Apply same sanitization as in the main function for ECR name
+        expected_ecr_repo_name = "".join(c if c.islower() or c.isdigit() or c in ['-', '_', '.'] else '-' for c in expected_ecr_repo_name_raw.lower()).strip('-_.')
+
+
+        mock_pathlib_Path.assert_any_call(mock_settings.PERSISTENT_WORKSPACE_BASE_DIR)
+        expected_workspace_path = mock_pathlib_Path(mock_settings.PERSISTENT_WORKSPACE_BASE_DIR) / "cloud-hosted" / expected_cluster_name
+        mock_path_instance.mkdir.assert_called_with(parents=True, exist_ok=True)
+
+        ecr_context_arg = mock_generate_ecr_tf_config.call_args[0][0]
+        self.assertEqual(ecr_context_arg["aws_region"], self.aws_creds.aws_region)
+        self.assertEqual(ecr_context_arg["ecr_repo_name"], expected_ecr_repo_name)
+        self.assertEqual(ecr_context_arg["image_tag_mutability"], mock_settings.ECR_DEFAULT_IMAGE_TAG_MUTABILITY)
+        self.assertEqual(ecr_context_arg["scan_on_push"], mock_settings.ECR_DEFAULT_SCAN_ON_PUSH)
+        mock_generate_ecr_tf_config.assert_called_once_with(unittest.mock.ANY, str(expected_workspace_path))
+
+        eks_context_arg = mock_generate_eks_tf_config.call_args[0][0]
+        self.assertEqual(eks_context_arg["cluster_name"], expected_cluster_name)
+        self.assertEqual(eks_context_arg["node_group_name"], f"{expected_cluster_name}-{mock_settings.EKS_DEFAULT_NODE_GROUP_NAME_SUFFIX}")
+        mock_generate_eks_tf_config.assert_called_once_with(unittest.mock.ANY, str(expected_workspace_path))
+
+        aws_env_vars_expected = {
+            "AWS_ACCESS_KEY_ID": self.aws_creds.aws_access_key_id.get_secret_value(),
+            "AWS_SECRET_ACCESS_KEY": self.aws_creds.aws_secret_access_key.get_secret_value(),
+            "AWS_DEFAULT_REGION": self.aws_creds.aws_region,
+        }
+        mock_run_terraform_init.assert_called_once_with(str(expected_workspace_path), aws_env_vars_expected)
+        mock_run_terraform_apply.assert_called_once_with(str(expected_workspace_path), aws_env_vars_expected)
+
+        self.assertEqual(response["status"], "success")
+        self.assertEqual(response["instance_id"], expected_cluster_name)
+        self.assertEqual(response["ecr_repository_url"], "test_ecr_url_output")
+        self.assertEqual(response["eks_cluster_endpoint"], "test_eks_ep_output")
+        self.assertIn("EKS cluster 'mcp-eks-test-repo-testuuid' and ECR repository 'mcp-app-test-repo-testuuid' provisioned successfully!", chat_request.messages[-1].content)
+
+
+    @patch('app.services.orchestration_service.terraform_service.generate_eks_tf_config')
+    @patch('app.services.orchestration_service.terraform_service.generate_ecr_tf_config')
+    @patch('app.services.orchestration_service.settings')
+    async def test_handle_cloud_hosted_deployment_ecr_gen_fails(
+        self, mock_settings, mock_generate_ecr_tf_config, mock_generate_eks_tf_config
+    ):
+        mock_settings.PERSISTENT_WORKSPACE_BASE_DIR = self.test_persistent_workspaces
+        mock_generate_ecr_tf_config.return_value = None # Simulate ECR config generation failure
+        chat_request = ChatCompletionRequest(messages=[ChatMessage(role="user", content="deploy")])
+
+        response = await handle_cloud_hosted_deployment(
+            self.repo_url, self.namespace, self.aws_creds, chat_request
+        )
+        self.assertEqual(response["status"], "error")
+        self.assertIn("Failed to generate ECR Terraform configuration", response["message"])
+        self.assertIn("Failed to generate ECR Terraform configuration", chat_request.messages[-1].content)
+        mock_generate_eks_tf_config.assert_not_called()
+
+    @patch('app.services.orchestration_service.terraform_service.run_terraform_init')
+    @patch('app.services.orchestration_service.terraform_service.generate_eks_tf_config')
+    @patch('app.services.orchestration_service.terraform_service.generate_ecr_tf_config')
+    @patch('app.services.orchestration_service.settings')
+    async def test_handle_cloud_hosted_deployment_eks_gen_fails(
+        self, mock_settings, mock_generate_ecr_tf_config, mock_generate_eks_tf_config, mock_run_terraform_init
+    ):
+        mock_settings.PERSISTENT_WORKSPACE_BASE_DIR = self.test_persistent_workspaces
+        mock_generate_ecr_tf_config.return_value = "path/to/ecr.tf"
+        mock_generate_eks_tf_config.return_value = None # Simulate EKS config generation failure
+        chat_request = ChatCompletionRequest(messages=[ChatMessage(role="user", content="deploy")])
+
+        response = await handle_cloud_hosted_deployment(
+            self.repo_url, self.namespace, self.aws_creds, chat_request
+        )
+        self.assertEqual(response["status"], "error")
+        self.assertIn("Failed to generate EKS Terraform configuration", response["message"])
+        mock_run_terraform_init.assert_not_called()
+
+    @patch('app.services.orchestration_service.terraform_service.run_terraform_apply')
+    @patch('app.services.orchestration_service.terraform_service.run_terraform_init')
+    @patch('app.services.orchestration_service.terraform_service.generate_eks_tf_config', return_value="path/to/eks.tf")
+    @patch('app.services.orchestration_service.terraform_service.generate_ecr_tf_config', return_value="path/to/ecr.tf")
+    @patch('app.services.orchestration_service.settings')
+    async def test_handle_cloud_hosted_deployment_tf_init_fails(
+        self, mock_settings, mock_gen_ecr, mock_gen_eks, mock_run_init, mock_run_apply
+    ):
+        mock_settings.PERSISTENT_WORKSPACE_BASE_DIR = self.test_persistent_workspaces
+        mock_run_init.return_value = (False, "", "Terraform init failed spectacularly")
+        chat_request = ChatCompletionRequest(messages=[ChatMessage(role="user", content="deploy")])
+
+        response = await handle_cloud_hosted_deployment(
+            self.repo_url, self.namespace, self.aws_creds, chat_request
+        )
+        self.assertEqual(response["status"], "error")
+        self.assertIn("Terraform init failed: Terraform init failed spectacularly", response["message"])
+        mock_run_apply.assert_not_called()
+
+    @patch('app.services.orchestration_service.terraform_service.run_terraform_apply')
+    @patch('app.services.orchestration_service.terraform_service.run_terraform_init', return_value=(True, "init_success", ""))
+    @patch('app.services.orchestration_service.terraform_service.generate_eks_tf_config', return_value="path/to/eks.tf")
+    @patch('app.services.orchestration_service.terraform_service.generate_ecr_tf_config', return_value="path/to/ecr.tf")
+    @patch('app.services.orchestration_service.settings')
+    async def test_handle_cloud_hosted_deployment_tf_apply_fails(
+        self, mock_settings, mock_gen_ecr, mock_gen_eks, mock_run_init, mock_run_apply
+    ):
+        mock_settings.PERSISTENT_WORKSPACE_BASE_DIR = self.test_persistent_workspaces
+        mock_run_apply.return_value = (False, {}, "", "Terraform apply exploded")
+        chat_request = ChatCompletionRequest(messages=[ChatMessage(role="user", content="deploy")])
+
+        response = await handle_cloud_hosted_deployment(
+            self.repo_url, self.namespace, self.aws_creds, chat_request
+        )
+        self.assertEqual(response["status"], "error")
+        self.assertIn("Terraform apply failed: Terraform apply exploded", response["message"])
+        self.assertIn("Manual cleanup of AWS resources", chat_request.messages[-1].content) # Check for cleanup advice
+
+    @patch('app.services.orchestration_service.terraform_service.run_terraform_apply', new_callable=AsyncMock) # Ensure it's an async mock
+    @patch('app.services.orchestration_service.terraform_service.run_terraform_init', new_callable=AsyncMock)
+    @patch('app.services.orchestration_service.terraform_service.generate_eks_tf_config', new_callable=MagicMock)
+    @patch('app.services.orchestration_service.terraform_service.generate_ecr_tf_config', new_callable=MagicMock)
+    @patch('app.services.orchestration_service.uuid.uuid4')
+    @patch('app.services.orchestration_service.settings')
+    async def test_handle_cloud_hosted_deployment_with_instance_id_override(
+        self, mock_settings, mock_uuid4,
+        mock_generate_ecr_tf_config, mock_generate_eks_tf_config,
+        mock_run_terraform_init, mock_run_terraform_apply
+    ):
+        mock_settings.PERSISTENT_WORKSPACE_BASE_DIR = self.test_persistent_workspaces
+        mock_settings.EKS_DEFAULT_CLUSTER_NAME_PREFIX = "mcp-eks"
+        mock_settings.ECR_DEFAULT_REPO_NAME_PREFIX = "mcp-app"
+
+        # Make terraform_service functions awaitable mocks that return successful values
+        mock_generate_ecr_tf_config.return_value = "path/to/ecr.tf"
+        mock_generate_eks_tf_config.return_value = "path/to/eks.tf"
+        mock_run_terraform_init.return_value = (True, "init_success_stdout", "")
+        mock_tf_outputs = {"ecr_repository_url": {"value": "override_ecr_url"}, "eks_cluster_endpoint": {"value": "override_eks_ep"}}
+        mock_run_terraform_apply.return_value = (True, mock_tf_outputs, "apply_stdout", "")
+
+        instance_id_override = "my-custom-id"
+        chat_request = ChatCompletionRequest(
+            messages=[ChatMessage(role="user", content="deploy cloud hosted with override")],
+            instance_id_override=instance_id_override # Key for cloud-hosted override
+        )
+
+        await handle_cloud_hosted_deployment(
+            self.repo_url, self.namespace, self.aws_creds, chat_request
+        )
+
+        mock_uuid4.assert_not_called() # UUID should not be used if override is present
+
+        expected_repo_name_part = "repo"
+        expected_cluster_name_override = f"{mock_settings.EKS_DEFAULT_CLUSTER_NAME_PREFIX}-{expected_repo_name_part}-{instance_id_override}"
+        expected_ecr_repo_name_override_raw = f"{mock_settings.ECR_DEFAULT_REPO_NAME_PREFIX}-{expected_repo_name_part}-{instance_id_override}"
+        expected_ecr_repo_name_override = "".join(c if c.islower() or c.isdigit() or c in ['-', '_', '.'] else '-' for c in expected_ecr_repo_name_override_raw.lower()).strip('-_.')
+
+
+        # Check that workspace path uses the override
+        called_workspace_path_for_ecr = pathlib.Path(mock_generate_ecr_tf_config.call_args[0][1])
+        self.assertIn(expected_cluster_name_override, str(called_workspace_path_for_ecr))
+
+        called_workspace_path_for_eks = pathlib.Path(mock_generate_eks_tf_config.call_args[0][1])
+        self.assertIn(expected_cluster_name_override, str(called_workspace_path_for_eks))
+
+        # Check that names passed to TF generation use the override
+        ecr_context_arg = mock_generate_ecr_tf_config.call_args[0][0]
+        self.assertEqual(ecr_context_arg["ecr_repo_name"], expected_ecr_repo_name_override)
+
+        eks_context_arg = mock_generate_eks_tf_config.call_args[0][0]
+        self.assertEqual(eks_context_arg["cluster_name"], expected_cluster_name_override)
 
 
 if __name__ == '__main__':
