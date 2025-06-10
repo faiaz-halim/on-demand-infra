@@ -4,310 +4,101 @@
     "version": "0.1.0",
     "prdSource": "prd.txt",
     "createdAt": "2024-06-01T12:00:00Z",
-    "updatedAt": "2024-06-01T15:10:00Z"
+    "updatedAt": "2024-06-01T15:15:00Z"
   },
   "tasks": [
     {
       "id": 1,
       "title": "Phase 1: Setup Core Project Infrastructure, API, and Foundational Services",
       "description": "Initialize the MCP server project, set up basic configurations, implement the OpenAI compatible API endpoint, integrate Azure OpenAI, and set up essential services like logging and GitHub interaction.",
-      "details": "This foundational phase covers setting up the Python (FastAPI) project, configuration management, the main API endpoint, basic Azure OpenAI chat integration, structured logging, and initial GitHub repository cloning and analysis capabilities.",
-      "testStrategy": "Combination of unit tests for individual components (API routes, config loading, Git cloning), and integration tests for basic API request-response flow with Azure OpenAI. Manual E2E test: send a chat prompt, verify response.",
-      "priority": "high",
-      "dependencies": [],
       "status": "done",
       "updatedAt": "2024-06-01T13:35:00Z",
       "subtasks": [
-        {
-          "id": "1.1",
-          "title": "Initialize Python Project (FastAPI)",
-          "description": "Set up the basic Python project structure using FastAPI, including directories for server code, templates, and tests.",
-          "details": "Create main application file (e.g., `main.py`), routers, and utility modules. Initialize `venv` and `requirements.txt` (or `pyproject.toml` with Poetry/PDM). Include FastAPI, Uvicorn, Pydantic, python-dotenv, openai.",
-          "acceptanceCriteria": "A basic FastAPI server can be started (e.g., `uvicorn main:app --reload`), and a root endpoint (e.g., `/health`) returns a success message.",
-          "status": "done",
-          "dependencies": [],
-          "updatedAt": "2024-06-01T12:10:00Z"
-        },
-        {
-          "id": "1.2",
-          "title": "Implement Configuration Management",
-          "description": "Set up system for loading configurations (e.g., API keys, settings) from environment variables and .env files.",
-          "details": "Use `python-dotenv`. Define expected configuration variables (e.g., `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `LOG_LEVEL`). Implement a config loading module/service accessible throughout the application. Ensure sensitive keys are not hardcoded.",
-          "acceptanceCriteria": "Configuration values can be loaded correctly. Missing critical configurations prevent startup or are handled with clear error messages.",
-          "status": "done",
-          "dependencies": ["1.1"],
-          "updatedAt": "2024-06-01T12:25:00Z"
-        },
-        {
-          "id": "1.3",
-          "title": "Implement OpenAI Compatible API Endpoint (/v1/chat/completions)",
-          "description": "Create the HTTP POST endpoint `/v1/chat/completions` that mimics the OpenAI API structure for receiving chat requests.",
-          "details": "Define Pydantic models for request (`ChatCompletionRequest`) and response (`ChatCompletionResponse`, `ChatCompletionChunk`) bodies according to OpenAI specification. Implement basic request validation. Support streaming responses (`stream=true`).",
-          "acceptanceCriteria": "Endpoint accepts valid JSON POST requests matching OpenAI format and returns a valid JSON response (or streams chunks). Invalid requests are handled with appropriate HTTP error codes (400, 422).",
-          "status": "done",
-          "dependencies": ["1.1"],
-          "updatedAt": "2024-06-01T12:35:00Z"
-        },
-        {
-          "id": "1.4",
-          "title": "Basic Azure OpenAI Integration for Chat",
-          "description": "Integrate with Azure OpenAI client library to forward processed chat messages and return responses via the API endpoint.",
-          "details": "Use the `openai` library configured for Azure (API key, endpoint, API version from config). Implement logic to take incoming messages from the API, format them for Azure OpenAI, send the request, and return/stream the Azure OpenAI response. Handle API errors from Azure (e.g., authentication, rate limits).",
-          "acceptanceCriteria": "A message sent to the `/v1/chat/completions` endpoint is successfully processed by Azure OpenAI, and its response is returned/streamed to the client.",
-          "status": "done",
-          "dependencies": ["1.2", "1.3"],
-          "updatedAt": "2024-06-01T12:45:00Z"
-        },
-        {
-          "id": "1.5",
-          "title": "Implement Structured Logging System",
-          "description": "Set up structured logging (e.g., JSON format) across the application for better monitoring and debugging.",
-          "details": "Use Python's `logging` module. Configure a JSON formatter (e.g., `python-json-logger`). Ensure logs include timestamp, level, message, module name, and relevant context (e.g., request ID if applicable). Log to stdout/stderr for containerized environments.",
-          "acceptanceCriteria": "Application events (startup, requests, errors, significant operations) are logged in a structured JSON format. Log levels are configurable via environment variable.",
-          "status": "done",
-          "dependencies": ["1.1"],
-          "updatedAt": "2024-06-01T12:55:00Z"
-        },
-        {
-          "id": "1.6",
-          "title": "Implement Git Clone Functionality for Public Repos",
-          "description": "Create a module/service to clone a public GitHub repository given its URL into a temporary workspace.",
-          "details": "Use `subprocess` to call `git clone` or a library like `GitPython`. Ensure the target directory is within a designated workspace. Handle errors like invalid URLs, non-existent repos, or network issues. Implement cleanup logic for temporary workspaces.",
-          "acceptanceCriteria": "Given a valid public GitHub URL, the repository is cloned into a unique, temporary local directory. Errors are handled and reported. Workspace is cleaned up after processing or on error.",
-          "status": "done",
-          "dependencies": ["1.1"],
-          "updatedAt": "2024-06-01T13:05:00Z"
-        },
-        {
-          "id": "1.7",
-          "title": "README.md Parsing for Build/Run Instructions",
-          "description": "Implement logic to read and parse `README.md` files from cloned repositories to heuristically identify build and run instructions.",
-          "details": "Focus on common sections (e.g., 'Build', 'Installation', 'Usage', 'Running'). Use regex or simple string matching. If instructions are not found, this should be flagged. This is a best-effort parsing; advanced parsing can be a future enhancement.",
-          "acceptanceCriteria": "For sample README files, the system can extract potential build/run commands or relevant sections. If no clear instructions are found, it indicates this. Handles missing README files gracefully.",
-          "status": "done",
-          "dependencies": ["1.6"],
-          "updatedAt": "2024-06-01T13:20:00Z"
-        },
-        {
-          "id": "1.8",
-          "title": "Dockerfile Detection and Basic Analysis",
-          "description": "Check for the presence of a `Dockerfile` in the cloned repository. If found, read its content and perform minimal analysis.",
-          "details": "Scan the root and common subdirectories for `Dockerfile`. If not found, report this (user might need to be prompted). Basic analysis: extract `EXPOSE` instructions, `CMD`/`ENTRYPOINT` if easily parseable.",
-          "acceptanceCriteria": "Correctly identifies the presence or absence of a Dockerfile. Reads content if present. Extracts basic information like exposed ports if available.",
-          "status": "done",
-          "dependencies": ["1.6"],
-          "updatedAt": "2024-06-01T13:35:00Z"
-        }
+        {"id": "1.1", "title": "Initialize Python Project (FastAPI)", "status": "done", "updatedAt": "2024-06-01T12:10:00Z"},
+        {"id": "1.2", "title": "Implement Configuration Management", "status": "done", "updatedAt": "2024-06-01T12:25:00Z"},
+        {"id": "1.3", "title": "Implement OpenAI Compatible API Endpoint (/v1/chat/completions)", "status": "done", "updatedAt": "2024-06-01T12:35:00Z"},
+        {"id": "1.4", "title": "Basic Azure OpenAI Integration for Chat", "status": "done", "updatedAt": "2024-06-01T12:45:00Z"},
+        {"id": "1.5", "title": "Implement Structured Logging System", "status": "done", "updatedAt": "2024-06-01T12:55:00Z"},
+        {"id": "1.6", "title": "Implement Git Clone Functionality for Public Repos", "status": "done", "updatedAt": "2024-06-01T13:05:00Z"},
+        {"id": "1.7", "title": "README.md Parsing for Build/Run Instructions", "status": "done", "updatedAt": "2024-06-01T13:20:00Z"},
+        {"id": "1.8", "title": "Dockerfile Detection and Basic Analysis", "status": "done", "updatedAt": "2024-06-01T13:35:00Z"}
       ]
     },
     {
       "id": 2,
       "title": "Phase 1: Dockerfile Checks and Local Image Building",
       "description": "Implement Dockerfile best practice checks and the capability to build Docker images locally from a cloned repository.",
-      "details": "This task focuses on analyzing the user's Dockerfile for common issues and then using the host's Docker daemon to build an image. This is crucial for all deployment modes.",
-      "testStrategy": "Unit tests for Dockerfile check functions. Integration test for building a sample Docker image. Manual test: provide a repo with a Dockerfile, verify checks are run and image is built.",
-      "priority": "high",
-      "dependencies": [1],
       "status": "done",
       "updatedAt": "2024-06-01T14:30:00Z",
       "subtasks": [
-        {
-          "id": "2.1",
-          "title": "Implement Dockerfile Best Practice Checks",
-          "description": "Develop a module to perform basic checks on a Dockerfile content for common best practice violations.",
-          "details": "Checks to implement: use of `sudo`, presence of `apt-get update` without `apt-get clean`, use of fixed versions for base images, potential for caching issues, not running as root user (check for `USER` instruction). This can be rule-based or use a linter library if suitable.",
-          "acceptanceCriteria": "Given a Dockerfile content, a list of potential issues or suggestions is generated. Passes for a known good Dockerfile.",
-          "status": "done",
-          "dependencies": ["1.8"],
-          "updatedAt": "2024-06-01T14:20:00Z"
-        },
-        {
-          "id": "2.2",
-          "title": "Local Docker Image Building Service",
-          "description": "Implement a service to build a Docker image locally using the host's Docker daemon from a given build context (cloned repository path).",
-          "details": "Use the Docker SDK for Python (`docker` library) or `subprocess` to call Docker CLI. Capture build logs. Handle build errors and report them clearly. Tag images appropriately (e.g., based on repo name and a unique ID).",
-          "acceptanceCriteria": "Given a path to a valid Docker build context, a Docker image is successfully built and tagged. Build logs are captured. Build failures are reported with relevant error messages.",
-          "status": "done",
-          "dependencies": ["1.6"],
-          "updatedAt": "2024-06-01T14:30:00Z"
-        }
+        {"id": "2.1", "title": "Implement Dockerfile Best Practice Checks", "status": "done", "updatedAt": "2024-06-01T14:20:00Z"},
+        {"id": "2.2", "title": "Local Docker Image Building Service", "status": "done", "updatedAt": "2024-06-01T14:30:00Z"}
       ]
     },
     {
       "id": 3,
       "title": "Phase 1: Kind Cluster Interaction & Local Mode Deployment",
       "description": "Implement the 'local' deployment mode, including Kind cluster setup/detection, Kubernetes manifest generation, and application lifecycle management within Kind.",
-      "details": "This is the first end-to-end deployment mode. It involves generating Terraform for Kind (if needed), creating K8s manifests, loading local images, and deploying the application.",
-      "testStrategy": "Unit tests for manifest generation. Integration tests for Kind cluster operations (create, deploy, delete). E2E test: deploy a sample application to Kind using 'local' mode.",
-      "priority": "high",
-      "dependencies": [1, 2],
       "status": "done",
       "updatedAt": "2024-06-01T15:00:00Z",
       "subtasks": [
-        {
-          "id": "3.1",
-          "title": "Kind Cluster Detection and Creation Logic",
-          "description": "Implement functionality to check for an existing Kind cluster or create a new one using a provided template.",
-          "details": "Use `kind get clusters` to detect. If creating, use `kind create cluster --config <template_path>`. The template should specify Calico CNI installation or the system should apply `calico.yaml` post-creation. Store Kind config templates (e.g., `templates/kind/kind-config.yaml.tpl`).",
-          "acceptanceCriteria": "Can correctly identify if a target Kind cluster is running. Can create a new Kind cluster with Calico CNI if one doesn't exist or if specified.",
-          "status": "done",
-          "dependencies": [],
-          "updatedAt": "2024-06-01T15:00:00Z"
-        },
-        {
-          "id": "3.2",
-          "title": "Kubernetes Manifest Generation for Local Mode",
-          "description": "Develop services to generate Kubernetes manifests (Deployment, Service with NodePort, Secrets) for local deployment.",
-          "details": "Use a templating engine (e.g., Jinja2). Manifests should be configurable based on user input (namespace, image name, app env vars from API request, exposed ports from Dockerfile analysis). Secrets should be created for environment variables.",
-          "acceptanceCriteria": "Valid Kubernetes YAML for Deployment, Service (NodePort), and Secrets are generated based on input parameters and templates.",
-          "status": "done",
-          "dependencies": ["1.8", "2.2"],
-          "updatedAt": "2024-06-01T15:00:00Z"
-        },
-        {
-          "id": "3.3",
-          "title": "Load Local Docker Images into Kind Cluster",
-          "description": "Implement logic to load locally built Docker images into the Kind cluster nodes.",
-          "details": "Use `kind load docker-image <image_name> --name <kind_cluster_name>`.",
-          "acceptanceCriteria": "A specified locally built Docker image is successfully loaded into all nodes of the target Kind cluster.",
-          "status": "done",
-          "dependencies": ["2.2", "3.1"],
-          "updatedAt": "2024-06-01T15:00:00Z"
-        },
-        {
-          "id": "3.4",
-          "title": "Application Lifecycle Management in Kind (Local Mode)",
-          "description": "Implement functions to deploy, redeploy, scale, and decommission applications in the Kind cluster.",
-          "details": "Use `kubectl apply -f <manifest_file>` for deployments/updates. Use `kubectl scale deployment/...` for scaling. Use `kubectl delete namespace/...` or `kubectl delete -f ...` for decommissioning. Handle namespace creation if specified by user and not existing.",
-          "acceptanceCriteria": "Application can be deployed to a specified namespace in Kind. Deployment can be updated with a new image. Application can be scaled up/down. Application and its resources can be cleanly removed from the cluster.",
-          "status": "done",
-          "dependencies": ["3.1", "3.2", "3.3"],
-          "updatedAt": "2024-06-01T15:00:00Z"
-        },
-        {
-          "id": "3.5",
-          "title": "Develop Foundational Terraform Generation Logic (Kind Config)",
-          "description": "Develop core templating/generation functions for simple Terraform configurations, starting with Kind cluster config if managed by Terraform.",
-          "details": "While Kind is often managed by CLI, if its config (e.g., multi-node) is to be generated via TF for consistency, this task covers it. Otherwise, this task focuses on establishing the TF generation pattern for later AWS resources. For now, this might be minimal if Kind is CLI-managed.",
-          "acceptanceCriteria": "A basic Terraform file for Kind cluster configuration can be generated from a template, or the foundational structure for Terraform generation is established.",
-          "status": "done",
-          "dependencies": [],
-          "updatedAt": "2024-06-01T15:00:00Z"
-        }
+        {"id": "3.1", "title": "Kind Cluster Detection and Creation Logic", "status": "done", "updatedAt": "2024-06-01T15:00:00Z"},
+        {"id": "3.2", "title": "Kubernetes Manifest Generation for Local Mode", "status": "done", "updatedAt": "2024-06-01T15:00:00Z"},
+        {"id": "3.3", "title": "Load Local Docker Images into Kind Cluster", "status": "done", "updatedAt": "2024-06-01T15:00:00Z"},
+        {"id": "3.4", "title": "Application Lifecycle Management in Kind (Local Mode)", "status": "done", "updatedAt": "2024-06-01T15:00:00Z"},
+        {"id": "3.5", "title": "Develop Foundational Terraform Generation Logic (Kind Config)", "status": "done", "updatedAt": "2024-06-01T15:00:00Z"}
       ]
     },
     {
       "id": 4,
       "title": "Phase 2: Cloud-Local Mode Orchestration & AWS Interaction",
       "description": "Implement the 'cloud-local' mode, focusing on AWS credential handling and the core logic for this mode.",
-      "details": "This involves setting up the selection logic for 'cloud-local' mode and securely managing AWS credentials provided by the user.",
-      "testStrategy": "Unit tests for mode selection logic and AWS credential handling. Manual test: select 'cloud-local' mode, provide mock credentials, verify flow.",
-      "priority": "medium-high",
-      "dependencies": [1],
       "status": "done",
       "updatedAt": "2024-06-01T15:05:00Z",
       "subtasks": [
-        {
-          "id": "4.1",
-          "title": "Implement Cloud-Local Mode Selection Logic",
-          "description": "Add logic to the main orchestrator to recognize and trigger the 'cloud-local' deployment workflow based on user input.",
-          "details": "Modify API request handling to parse `deployment_mode`. Route to specific cloud-local functions/modules.",
-          "acceptanceCriteria": "When 'cloud-local' is specified in the API request, the system correctly identifies and initiates the cloud-local workflow.",
-          "status": "done",
-          "dependencies": ["1.3"],
-          "updatedAt": "2024-06-01T15:05:00Z"
-        },
-        {
-          "id": "4.2",
-          "title": "Secure AWS Credential Input and Handling",
-          "description": "Implement mechanisms for the user to provide AWS credentials (access key, secret key, region) and handle them securely in memory for the duration of the operation.",
-          "details": "Credentials should be passed in the API request (as per Data Model). Ensure they are not logged or stored persistently beyond operational necessity. Use them to configure AWS SDK/Terraform provider.",
-          "acceptanceCriteria": "AWS credentials can be received via API. Credentials are available to Terraform/AWS SDK components during execution. No logs contain raw credentials.",
-          "status": "done",
-          "dependencies": ["1.2", "1.3"],
-          "updatedAt": "2024-06-01T15:05:00Z"
-        }
+        {"id": "4.1", "title": "Implement Cloud-Local Mode Selection Logic", "status": "done", "updatedAt": "2024-06-01T15:05:00Z"},
+        {"id": "4.2", "title": "Secure AWS Credential Input and Handling", "status": "done", "updatedAt": "2024-06-01T15:05:00Z"}
       ]
     },
     {
       "id": 5,
       "title": "Phase 2: Terraform for EC2 & Prerequisites (Cloud-Local)",
       "description": "Generate Terraform modules to provision an EC2 instance and install necessary prerequisites (Docker, Kind, Calico) for the 'cloud-local' mode.",
-      "details": "This task focuses on creating reusable Terraform code for the EC2 environment setup.",
-      "testStrategy": "Unit tests for Terraform code generation. Test generated Terraform code against AWS (sandboxed environment) to ensure EC2 instances are provisioned and configured correctly. Verify prerequisites are installed on EC2.",
-      "priority": "medium-high",
-      "dependencies": [4, "3.5"],
       "status": "done",
       "updatedAt": "2024-06-01T15:10:00Z",
       "subtasks": [
-        {
-          "id": "5.1",
-          "title": "Terraform Module for EC2 Instance Provisioning",
-          "description": "Develop Terraform code (or use a templating engine to generate it) for provisioning an AWS EC2 instance with specified size (e.g., t3.medium, user-configurable), appropriate AMI (e.g., Amazon Linux 2), and key pair (user to manage key pair).",
-          "details": "Include Security Group configuration to allow SSH and application ports. Output EC2 instance public IP/DNS.",
-          "acceptanceCriteria": "Terraform code successfully provisions an EC2 instance with the correct size, AMI, and security group settings. Public IP is accessible.",
-          "status": "done",
-          "dependencies": ["4.2"],
-          "updatedAt": "2024-06-01T15:10:00Z"
-        },
-        {
-          "id": "5.2",
-          "title": "User-Data/Provisioner Scripts for EC2 Prerequisites",
-          "description": "Create scripts (e.g., bash) to be used as EC2 user-data or by Terraform provisioners (remote-exec) to install Docker, Kind, Calico CNI, and any other required tools on the provisioned EC2 instance.",
-          "details": "Ensure scripts are idempotent if possible. Verify installation of specific versions if required.",
-          "acceptanceCriteria": "After EC2 provisioning, Docker, Kind, and Calico are installed and operational on the instance.",
-          "status": "done",
-          "dependencies": ["5.1"],
-          "updatedAt": "2024-06-01T15:10:00Z"
-        },
-        {
-          "id": "5.3",
-          "title": "Integrate Terraform Execution for EC2 Setup",
-          "description": "Implement logic to invoke `terraform apply` for the generated EC2 provisioning modules and capture output (like public IP).",
-          "details": "Use `python-terraform` library or `subprocess` to run Terraform CLI commands (`init`, `apply`, `destroy`). Manage Terraform state (local or remote backend like S3, TBD).",
-          "acceptanceCriteria": "The MCP server can successfully execute Terraform to create the EC2 environment. EC2 public IP is captured.",
-          "status": "done",
-          "dependencies": ["5.1", "5.2"],
-          "updatedAt": "2024-06-01T15:10:00Z"
-        }
+        {"id": "5.1", "title": "Terraform Module for EC2 Instance Provisioning", "status": "done", "updatedAt": "2024-06-01T15:10:00Z"},
+        {"id": "5.2", "title": "User-Data/Provisioner Scripts for EC2 Prerequisites", "status": "done", "updatedAt": "2024-06-01T15:10:00Z"},
+        {"id": "5.3", "title": "Integrate Terraform Execution for EC2 Setup", "status": "done", "updatedAt": "2024-06-01T15:10:00Z"}
       ]
     },
     {
       "id": 6,
       "title": "Phase 2: Remote App Build & Deployment to Kind on EC2 (Cloud-Local)",
       "description": "Automate application repository cloning, Docker image building on the remote EC2, and deployment to the Kind cluster running on that EC2 instance.",
-      "details": "This involves orchestrating commands on the remote EC2 instance or having an agent/script on EC2 perform these actions.",
-      "testStrategy": "Integration test: Full cloud-local flow for a sample application. Verify app is accessible via EC2 public IP.",
-      "priority": "medium-high",
-      "dependencies": [5, 2, 3],
-      "status": "pending",
+      "status": "done",
+      "updatedAt": "2024-06-01T15:15:00Z",
       "subtasks": [
         {
           "id": "6.1",
           "title": "Automate Repo Clone and Image Build on EC2",
           "description": "Implement mechanism to trigger repository cloning and Docker image building on the provisioned EC2 instance.",
-          "details": "This could be done via SSH commands (e.g., using `paramiko` or `subprocess` with SSH), or by having a pre-configured script on the EC2 instance that the MCP server triggers. Image should be tagged appropriately.",
-          "acceptanceCriteria": "Application repository is cloned on the EC2 instance. Docker image is built successfully on EC2.",
-          "status": "pending",
-          "dependencies": ["5.3"]
+          "status": "done",
+          "updatedAt": "2024-06-01T15:15:00Z"
         },
         {
           "id": "6.2",
           "title": "Deploy Application to Kind on EC2",
           "description": "Implement mechanism to deploy the application to the Kind cluster running on EC2, using manifests generated by MCP.",
-          "details": "Generated K8s manifests need to be transferred to EC2 or applied remotely via `kubectl` configured for the Kind cluster on EC2. This includes loading the Docker image built on EC2 into Kind on EC2.",
-          "acceptanceCriteria": "Application is deployed to Kind on EC2. `kind load docker-image ...` and `kubectl apply ...` commands are successful on EC2.",
-          "status": "pending",
-          "dependencies": ["6.1", "3.2", "3.3"]
+          "status": "done",
+          "updatedAt": "2024-06-01T15:15:00Z"
         },
         {
           "id": "6.3",
           "title": "Expose Application via EC2 Public IP/Load Balancer",
           "description": "Ensure the application deployed in Kind (on EC2) is accessible externally via the EC2 instance's public IP and NodePort, or a simple AWS Load Balancer if configured by Terraform.",
-          "details": "This involves ensuring the EC2 security group allows traffic on the NodePort. If an AWS LB is used, Terraform should configure it to forward traffic to the EC2 instance's NodePort.",
-          "acceptanceCriteria": "The deployed application is accessible from the internet using the EC2 public IP and NodePort or LB URL.",
-          "status": "pending",
-          "dependencies": ["6.2", "5.1"]
+          "status": "done",
+          "updatedAt": "2024-06-01T15:15:00Z"
         }
       ]
     },
@@ -315,312 +106,82 @@
       "id": 7,
       "title": "Phase 2: Tool Call Integration for Contextualization",
       "description": "Implement the framework for making tool calls to external services (e.g., Context7 MCP, web search) to fetch documentation and best practices.",
-      "details": "This will enhance the quality of generated Terraform/Kubernetes code by incorporating external knowledge.",
-      "testStrategy": "Unit tests for tool call request/response handling. Integration test with a mock tool endpoint. Manual test: trigger a tool call for a specific query.",
-      "priority": "medium",
-      "dependencies": [1],
       "status": "pending",
       "subtasks": [
-        {
-          "id": "7.1",
-          "title": "Develop Tool Call Framework",
-          "description": "Create a generic framework within the MCP server to manage requests and responses for different external tools.",
-          "details": "Define data structures for tool call requests (tool name, query, parameters) and responses. Implement a dispatcher or registry for different tool handlers.",
-          "acceptanceCriteria": "The framework can dispatch a request to a registered tool handler and process its response.",
-          "status": "pending",
-          "dependencies": ["1.4"]
-        },
-        {
-          "id": "7.2",
-          "title": "Implement Web Search Tool Integration",
-          "description": "Integrate with a web search API (e.g., Google Search API, Bing Search API, or a library that wraps one) to fetch information.",
-          "details": "Handle API key management for the search API. Process search results to extract relevant snippets and source URLs. Requires internet access from MCP server.",
-          "acceptanceCriteria": "Given a query, the system can fetch and process search results from a web search engine.",
-          "status": "pending",
-          "dependencies": ["7.1", "1.2"]
-        },
-        {
-          "id": "7.3",
-          "title": "Develop Prompts for Documentation/Best Practice Search",
-          "description": "Create effective prompts to be used with the AI model (Azure OpenAI) to formulate queries for the tool calls based on the current context (e.g., user request, resource being generated).",
-          "details": "Prompts should guide the AI to ask specific, targeted questions to the external tools to get useful information for Terraform/AWS best practices, security, scaling etc.",
-          "acceptanceCriteria": "AI can generate effective search queries for tool calls based on different internal contexts.",
-          "status": "pending",
-          "dependencies": ["1.4", "7.1"]
-        }
+        {"id": "7.1", "title": "Develop Tool Call Framework", "status": "pending"},
+        {"id": "7.2", "title": "Implement Web Search Tool Integration", "status": "pending"},
+        {"id": "7.3", "title": "Develop Prompts for Documentation/Best Practice Search", "status": "pending"}
       ]
     },
     {
       "id": 8,
       "title": "Phase 2: Lifecycle Management (Cloud-Local)",
       "description": "Implement application redeployment, scaling (within Kind on EC2), and decommissioning (Terraform destroy of EC2 setup) for the 'cloud-local' mode.",
-      "details": "Ensures full lifecycle control over cloud-local deployments.",
-      "testStrategy": "Manual E2E testing of redeploy, scale, and decommission operations for a cloud-local deployment.",
-      "priority": "medium-high",
-      "dependencies": [6, 5],
       "status": "pending",
       "subtasks": [
-        {
-          "id": "8.1",
-          "title": "Implement Redeployment for Cloud-Local",
-          "description": "Allow updating the application in the Kind cluster on EC2 with a new image or configuration.",
-          "details": "This involves rebuilding the image on EC2 (if source changed), updating K8s manifests, and applying them (similar to local mode but orchestrated on EC2).",
-          "acceptanceCriteria": "An existing cloud-local deployment can be updated to a new version.",
-          "status": "pending",
-          "dependencies": ["6.2"]
-        },
-        {
-          "id": "8.2",
-          "title": "Implement Scaling for Cloud-Local (In-Kind)",
-          "description": "Allow scaling the application deployment within the Kind cluster on EC2.",
-          "details": "Trigger `kubectl scale deployment/...` commands on the EC2 instance for the Kind cluster.",
-          "acceptanceCriteria": "The number of application replicas in the Kind cluster on EC2 can be changed.",
-          "status": "pending",
-          "dependencies": ["6.2"]
-        },
-        {
-          "id": "8.3",
-          "title": "Implement Decommissioning for Cloud-Local",
-          "description": "Provide functionality to completely remove the 'cloud-local' environment by destroying the Terraform-managed EC2 instance and related AWS resources.",
-          "details": "Execute `terraform destroy` for the specific cloud-local deployment's Terraform configuration.",
-          "acceptanceCriteria": "The entire EC2 instance and associated AWS resources for a cloud-local deployment are successfully destroyed via Terraform.",
-          "status": "pending",
-          "dependencies": ["5.3"]
-        }
+        {"id": "8.1", "title": "Implement Redeployment for Cloud-Local", "status": "pending"},
+        {"id": "8.2", "title": "Implement Scaling for Cloud-Local (In-Kind)", "status": "pending"},
+        {"id": "8.3", "title": "Implement Decommissioning for Cloud-Local", "status": "pending"}
       ]
     },
     {
       "id": 9,
       "title": "Phase 3: Cloud-Hosted Mode Orchestration & Core EKS/ECR Terraform",
       "description": "Implement 'cloud-hosted' mode logic and Terraform for EKS cluster and ECR repository.",
-      "details": "Initiates the most complex deployment mode, focusing on setting up the foundational EKS and ECR resources.",
-      "testStrategy": "Unit tests for Terraform generation. Test generated Terraform against AWS (sandboxed) for EKS and ECR creation.",
-      "priority": "medium",
-      "dependencies": [4, "3.5"],
       "status": "pending",
       "subtasks": [
-        {
-          "id": "9.1",
-          "title": "Implement Cloud-Hosted Mode Selection Logic",
-          "description": "Add logic to the main orchestrator for the 'cloud-hosted' deployment workflow.",
-          "details": "Similar to cloud-local, parse `deployment_mode` and route to cloud-hosted specific functions.",
-          "acceptanceCriteria": "When 'cloud-hosted' is specified, the system correctly initiates the cloud-hosted workflow.",
-          "status": "pending",
-          "dependencies": ["1.3", "4.2"]
-        },
-        {
-          "id": "9.2",
-          "title": "Terraform Module for EKS Cluster Provisioning",
-          "description": "Develop Terraform code for provisioning an AWS EKS cluster with managed node groups. Include VPC, subnets, and necessary IAM roles.",
-          "details": "Parameterize node group size, instance types. Follow EKS best practices. Ensure cluster endpoint is accessible.",
-          "acceptanceCriteria": "Terraform successfully provisions an operational EKS cluster with configured node groups.",
-          "status": "pending",
-          "dependencies": ["4.2", "3.5"]
-        },
-        {
-          "id": "9.3",
-          "title": "Terraform Module for ECR Repository Creation",
-          "description": "Develop Terraform code to create a private AWS ECR repository for storing application Docker images.",
-          "details": "Repository name should be configurable or derived from application name.",
-          "acceptanceCriteria": "Terraform successfully creates an ECR repository.",
-          "status": "pending",
-          "dependencies": ["4.2", "3.5"]
-        },
-        {
-          "id": "9.4",
-          "title": "Integrate Terraform Execution for EKS/ECR Setup",
-          "description": "Implement logic to invoke `terraform apply` for EKS and ECR modules.",
-          "details": "Manage Terraform state. Capture outputs like EKS cluster endpoint and ECR repository URL.",
-          "acceptanceCriteria": "MCP server can execute Terraform to create EKS and ECR. Outputs are captured.",
-          "status": "pending",
-          "dependencies": ["9.2", "9.3"]
-        }
+        {"id": "9.1", "title": "Implement Cloud-Hosted Mode Selection Logic", "status": "pending"},
+        {"id": "9.2", "title": "Terraform Module for EKS Cluster Provisioning", "status": "pending"},
+        {"id": "9.3", "title": "Terraform Module for ECR Repository Creation", "status": "pending"},
+        {"id": "9.4", "title": "Integrate Terraform Execution for EKS/ECR Setup", "status": "pending"}
       ]
     },
     {
       "id": 10,
       "title": "Phase 3: Docker-in-Docker Build and ECR Push (Cloud-Hosted)",
       "description": "Implement Docker image building using Docker-in-Docker (DinD) and push the image to the created ECR repository.",
-      "details": "DinD might be run within the MCP server's environment or a dedicated build environment if MCP is itself containerized. Requires careful handling of Docker sockets and privileges.",
-      "testStrategy": "Integration test: Build a sample image using DinD and push to a test ECR repo.",
-      "priority": "medium",
-      "dependencies": [9, 2],
       "status": "pending",
       "subtasks": [
-        {
-          "id": "10.1",
-          "title": "Setup Docker-in-Docker Build Environment/Logic",
-          "description": "Configure or implement a Docker-in-Docker build capability. This might involve running a DinD container or ensuring the MCP server's Docker daemon can build images from various contexts without conflict.",
-          "details": "Carefully manage Docker socket access if MCP is containerized. Ensure build contexts are correctly mounted or transferred.",
-          "acceptanceCriteria": "A Docker image can be built in an isolated environment (DinD) using a provided build context.",
-          "status": "pending",
-          "dependencies": ["2.2"]
-        },
-        {
-          "id": "10.2",
-          "title": "Implement ECR Login and Image Push",
-          "description": "Develop logic to authenticate Docker with ECR and push the built image to the target ECR repository.",
-          "details": "Use `aws ecr get-login-password` piped to `docker login`. Tag the image correctly with ECR repository URI before pushing.",
-          "acceptanceCriteria": "A locally built Docker image is successfully authenticated with and pushed to the specified ECR repository.",
-          "status": "pending",
-          "dependencies": ["10.1", "9.3", "4.2"]
-        }
+        {"id": "10.1", "title": "Setup Docker-in-Docker Build Environment/Logic", "status": "pending"},
+        {"id": "10.2", "title": "Implement ECR Login and Image Push", "status": "pending"}
       ]
     },
     {
       "id": 11,
       "title": "Phase 3: EKS Deployment, Nginx Ingress, Networking & SSL (Cloud-Hosted)",
       "description": "Deploy application to EKS, set up Nginx Ingress, AWS NLB, Route53, and ACM for SSL.",
-      "details": "This task covers the full application exposure stack on EKS.",
-      "testStrategy": "Integration test: Deploy a sample app to EKS and verify it's accessible via HTTPS URL with a valid certificate.",
-      "priority": "medium",
-      "dependencies": [9, 10, 3],
       "status": "pending",
       "subtasks": [
-        {
-          "id": "11.1",
-          "title": "Kubernetes Manifest Generation for EKS Deployment",
-          "description": "Generate Kubernetes Deployments and Services (ClusterIP) for applications, referencing images stored in ECR.",
-          "details": "Adapt K8s manifest generation logic for EKS specifics. Ensure service discovery is handled within EKS.",
-          "acceptanceCriteria": "Valid K8s manifests for EKS are generated, using the correct ECR image URI.",
-          "status": "pending",
-          "dependencies": ["3.2", "10.2"]
-        },
-        {
-          "id": "11.2",
-          "title": "Terraform/Kubernetes for Nginx Ingress Controller in EKS",
-          "description": "Generate Terraform and/or Kubernetes manifests to install and configure Nginx Ingress Controller in the EKS cluster.",
-          "details": "Use Helm charts for Nginx Ingress if possible, managed via Terraform Helm provider or Kubectl. Ensure it's configured to use AWS NLB.",
-          "acceptanceCriteria": "Nginx Ingress Controller is installed in EKS and configured to be exposed via an AWS NLB.",
-          "status": "pending",
-          "dependencies": ["9.2"]
-        },
-        {
-          "id": "11.3",
-          "title": "Kubernetes Ingress Resource Generation",
-          "description": "Generate Kubernetes Ingress resources to expose application services through the Nginx Ingress Controller.",
-          "details": "Configure hostnames (subdomains), paths, and backend services. Annotations for ACM certificate will be needed.",
-          "acceptanceCriteria": "Valid K8s Ingress resource is generated, correctly routing traffic to the application service.",
-          "status": "pending",
-          "dependencies": ["11.1", "11.2"]
-        },
-        {
-          "id": "11.4",
-          "title": "Terraform for Route53 Subdomain and ACM Certificate",
-          "description": "Generate Terraform code to create a Route53 'A' record (alias to NLB) for the application's subdomain and provision an ACM SSL/TLS certificate for that subdomain, validating it via DNS.",
-          "details": "Assumes a parent Route53 hosted zone is available and configured. Certificate should be associated with the NLB listener used by Nginx Ingress.",
-          "acceptanceCriteria": "Route53 record is created. ACM certificate is provisioned, validated, and associated with the NLB.",
-          "status": "pending",
-          "dependencies": ["11.2", "4.2"]
-        },
-        {
-          "id": "11.5",
-          "title": "Apply Manifests and Provide User with HTTPS URL",
-          "description": "Apply all generated Kubernetes manifests to EKS. Retrieve the final HTTPS URL and provide it to the user.",
-          "details": "Orchestrate `kubectl apply` for deployments, services, ingress. Wait for NLB DNS to propagate.",
-          "acceptanceCriteria": "Application is deployed and accessible via a secure HTTPS URL. User is provided with this URL.",
-          "status": "pending",
-          "dependencies": ["11.1", "11.3", "11.4"]
-        }
+        {"id": "11.1", "title": "Kubernetes Manifest Generation for EKS Deployment", "status": "pending"},
+        {"id": "11.2", "title": "Terraform/Kubernetes for Nginx Ingress Controller in EKS", "status": "pending"},
+        {"id": "11.3", "title": "Kubernetes Ingress Resource Generation", "status": "pending"},
+        {"id": "11.4", "title": "Terraform for Route53 Subdomain and ACM Certificate", "status": "pending"},
+        {"id": "11.5", "title": "Apply Manifests and Provide User with HTTPS URL", "status": "pending"}
       ]
     },
     {
       "id": 12,
       "title": "Phase 3: Lifecycle Management (Cloud-Hosted)",
       "description": "Implement application redeployment, scaling, and decommissioning for the 'cloud-hosted' EKS environment.",
-      "details": "Provides full control over EKS-based deployments.",
-      "testStrategy": "Manual E2E testing of redeploy, scale, and decommission for an EKS deployment.",
-      "priority": "medium",
-      "dependencies": [11, 9],
       "status": "pending",
       "subtasks": [
-        {
-          "id": "12.1",
-          "title": "Implement Redeployment for Cloud-Hosted (EKS)",
-          "description": "Allow updating the application in EKS with a new image (from ECR) or configuration.",
-          "details": "Update K8s Deployment with new image tag, apply manifests. EKS rolling updates will handle the process.",
-          "acceptanceCriteria": "An existing EKS deployment can be updated to a new version from ECR.",
-          "status": "pending",
-          "dependencies": ["11.5", "10.2"]
-        },
-        {
-          "id": "12.2",
-          "title": "Implement Scaling for Cloud-Hosted (EKS)",
-          "description": "Allow scaling the application deployment in EKS (manual replica count or HPA if configured). Also, node group scaling if necessary.",
-          "details": "Modify K8s Deployment replicas and apply. For node group scaling, update Terraform for EKS managed node groups and apply.",
-          "acceptanceCriteria": "Application replicas in EKS can be changed. EKS node groups can be scaled if needed.",
-          "status": "pending",
-          "dependencies": ["11.5", "9.2"]
-        },
-        {
-          "id": "12.3",
-          "title": "Implement Decommissioning for Cloud-Hosted (EKS)",
-          "description": "Provide functionality to remove the 'cloud-hosted' environment by destroying Terraform-managed EKS cluster, ECR repo (optional), and related AWS resources.",
-          "details": "Execute `terraform destroy` for the EKS and related resources. Handle dependencies carefully (e.g., NLB, Route53 records).",
-          "acceptanceCriteria": "The EKS cluster, ECR (if specified), and associated AWS resources are successfully destroyed via Terraform.",
-          "status": "pending",
-          "dependencies": ["9.4", "11.4"]
-        }
+        {"id": "12.1", "title": "Implement Redeployment for Cloud-Hosted (EKS)", "status": "pending"},
+        {"id": "12.2", "title": "Implement Scaling for Cloud-Hosted (EKS)", "status": "pending"},
+        {"id": "12.3", "title": "Implement Decommissioning for Cloud-Hosted (EKS)", "status": "pending"}
       ]
     },
     {
       "id": 13,
       "title": "Phase 4: Polish, Testing & External Integration",
       "description": "Focus on refining the system, comprehensive testing, security hardening, documentation, and ensuring smooth integration with external tools like Open WebUI.",
-      "details": "This phase makes the product robust, secure, and user-friendly.",
-      "testStrategy": "Extensive E2E testing, security audits, performance testing, usability testing with target frontends.",
-      "priority": "low-medium",
-      "dependencies": [1,2,3,4,5,6,7,8,9,10,11,12],
       "status": "pending",
       "subtasks": [
-        {
-          "id": "13.1",
-          "title": "Advanced API Compatibility & Frontend Testing (Open WebUI)",
-          "description": "Thoroughly test OpenAI API compatibility, especially streaming and error handling, with popular frontends like Open WebUI.",
-          "details": "Set up Open WebUI to connect to the MCP server. Test various chat flows, streaming responses, and how errors are displayed.",
-          "acceptanceCriteria": "MCP Server integrates smoothly with Open WebUI. Streaming works correctly. Errors are handled gracefully by the frontend.",
-          "status": "pending",
-          "dependencies": ["1.3", "1.4"]
-        },
-        {
-          "id": "13.2",
-          "title": "Comprehensive Security Review and Hardening",
-          "description": "Conduct a security review of generated Terraform/Kubernetes configurations, credential handling, API security, and dependencies.",
-          "details": "Check for common vulnerabilities (e.g., OWASP Top 10 for web API). Ensure least privilege in generated IAM roles. Scan dependencies for known vulnerabilities. Harden Docker images.",
-          "acceptanceCriteria": "Security review completed. Identified vulnerabilities are addressed or mitigated. Security best practices are documented and followed.",
-          "status": "pending",
-          "dependencies": []
-        },
-        {
-          "id": "13.3",
-          "title": "Robust Error Handling & User Feedback Enhancement",
-          "description": "Improve error messages throughout the system to be more informative and user-friendly. Provide better guidance to users on how to resolve issues.",
-          "details": "Review all error handling paths. Ensure error messages include context, potential causes, and suggested next steps. Standardize error response formats from the API.",
-          "acceptanceCriteria": "Error messages are clear, actionable, and help users troubleshoot problems effectively.",
-          "status": "pending",
-          "dependencies": ["1.3", "1.5"]
-        },
-        {
-          "id": "13.4",
-          "title": "User Documentation Creation",
-          "description": "Create comprehensive user documentation covering API usage, deployment modes, prerequisites, AWS configuration, troubleshooting, and examples.",
-          "details": "Structure documentation clearly (e.g., Getting Started, API Reference, Deployment Guides). Use Markdown for easy rendering (e.g., in GitHub Wiki or a static site generator).",
-          "acceptanceCriteria": "User documentation is complete, accurate, and helps users effectively use the MCP server.",
-          "status": "pending",
-          "dependencies": []
-        },
-        {
-          "id": "13.5",
-          "title": "Extensive End-to-End Testing",
-          "description": "Perform extensive E2E testing for all deployment modes with a variety of sample applications (e.g., simple web app, app with database dependency - though DB provisioning is out of scope for MCP itself).",
-          "details": "Develop a test plan covering different scenarios, edge cases, and failure conditions. Automate E2E tests where possible.",
-          "acceptanceCriteria": "All deployment modes function correctly for various application types. System is stable under typical load. Known issues are documented.",
-          "status": "pending",
-          "dependencies": []
-        }
+        {"id": "13.1", "title": "Advanced API Compatibility & Frontend Testing (Open WebUI)", "status": "pending"},
+        {"id": "13.2", "title": "Comprehensive Security Review and Hardening", "status": "pending"},
+        {"id": "13.3", "title": "Robust Error Handling & User Feedback Enhancement", "status": "pending"},
+        {"id": "13.4", "title": "User Documentation Creation", "status": "pending"},
+        {"id": "13.5", "title": "Extensive End-to-End Testing", "status": "pending"}
       ]
     }
   ]
 }
-
-[end of tasks.json]

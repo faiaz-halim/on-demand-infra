@@ -1,6 +1,7 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional, List, Dict, Any
 import json
+import pathlib # For EC2_PRIVATE_KEY_BASE_PATH if we want to make it a Path object
 
 class Settings(BaseSettings):
     # Azure OpenAI API settings
@@ -29,32 +30,36 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
 
     # Kind Cluster settings
-    KIND_CLUSTER_NAME: str = "on-demand-infra" # Default name for Kind cluster if created by MCP
+    KIND_CLUSTER_NAME: str = "on-demand-infra"
     KIND_CALICO_MANIFEST_URL: Optional[str] = "https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/calico.yaml"
     DEFAULT_KIND_VERSION: str = "0.23.0"
     DEFAULT_KUBECTL_VERSION: str = "1.30.0"
 
     # EC2 Default settings for Cloud-Local
-    # Example AMI ID for Amazon Linux 2 (HVM), SSD Volume Type in us-east-1.
-    # This is a common one, but users should verify/update for their specific region and needs.
     EC2_DEFAULT_AMI_ID: str = "ami-00c39f71452c08778"
-    EC2_DEFAULT_INSTANCE_TYPE: str = "t3.medium" # Updated as per subtask
-    # CRITICAL: User must ensure this key pair exists in their target AWS account and region.
-    # Setting to None by default to force configuration either via .env or API parameter.
+    EC2_DEFAULT_INSTANCE_TYPE: str = "t3.medium"
     EC2_DEFAULT_KEY_NAME: Optional[str] = None
     EC2_DEFAULT_APP_PORTS_JSON: str = '[{"port": 80, "protocol": "tcp"}]'
+
+    # EC2 SSH settings
+    EC2_SSH_USERNAME: str = "ec2-user"
+    # Path on the MCP server where private keys for EC2 access might be stored.
+    # Example: /keys/ or ~/.ssh/. This MUST be configured securely by the admin.
+    # The application will append the 'key_name' (e.g., my-key.pem) to this base path.
+    EC2_PRIVATE_KEY_BASE_PATH: Optional[str] = None
+    EC2_DEFAULT_REPO_PATH: str = "/home/ec2-user/app_repo" # Default path on EC2 for cloning repo
+    EC2_DEFAULT_REMOTE_MANIFEST_PATH: str = "/tmp/mcp_manifests" # Default path on EC2 for uploaded K8s manifests
+
 
     @property
     def EC2_DEFAULT_APP_PORTS(self) -> List[Dict[str, Any]]:
         try:
             ports = json.loads(self.EC2_DEFAULT_APP_PORTS_JSON)
             if not isinstance(ports, list):
-                # Consider logging this warning with the application's logger
                 print(f"Warning: EC2_DEFAULT_APP_PORTS_JSON ('{self.EC2_DEFAULT_APP_PORTS_JSON}') is not a valid JSON list. Using empty list.")
                 return []
             for item in ports:
                 if not isinstance(item, dict) or "port" not in item or "protocol" not in item:
-                    # Consider logging this warning
                     print(f"Warning: Invalid item in EC2_DEFAULT_APP_PORTS_JSON: {item}. Must be dict with 'port' and 'protocol'. Using empty list.")
                     return []
             return ports
@@ -62,7 +67,6 @@ class Settings(BaseSettings):
             print(f"Warning: Failed to parse EC2_DEFAULT_APP_PORTS_JSON ('{self.EC2_DEFAULT_APP_PORTS_JSON}'). Using default empty list.")
             return []
 
-    # Model configuration for .env file
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding='utf-8', extra='ignore')
 
 settings = Settings()
