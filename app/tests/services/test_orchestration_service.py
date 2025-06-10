@@ -252,6 +252,14 @@ class TestOrchestrationService(unittest.IsolatedAsyncioTestCase):
     # Note: The 'test_handle_cloud_hosted_deployment_placeholder' might need to be removed or updated
     # if the actual implementation is no longer a placeholder. For now, adding new detailed tests.
 
+    @patch('app.services.orchestration_service.shutil.rmtree')
+    @patch('app.services.orchestration_service.tempfile.mkdtemp')
+    @patch('app.services.orchestration_service.docker_service.push_image_to_ecr')
+    @patch('app.services.orchestration_service.docker_service.login_to_ecr')
+    @patch('app.services.orchestration_service.docker.from_env') # To mock docker client instance
+    @patch('app.services.orchestration_service.docker_service.get_ecr_login_details')
+    @patch('app.services.orchestration_service.docker_service.build_docker_image_locally')
+    @patch('app.services.orchestration_service.git_service.clone_repository')
     @patch('app.services.orchestration_service.terraform_service.run_terraform_apply')
     @patch('app.services.orchestration_service.terraform_service.run_terraform_init')
     @patch('app.services.orchestration_service.terraform_service.generate_eks_tf_config')
@@ -262,7 +270,10 @@ class TestOrchestrationService(unittest.IsolatedAsyncioTestCase):
     async def test_handle_cloud_hosted_deployment_success(
         self, mock_settings, mock_pathlib_Path, mock_uuid4,
         mock_generate_ecr_tf_config, mock_generate_eks_tf_config,
-        mock_run_terraform_init, mock_run_terraform_apply
+        mock_run_terraform_init, mock_run_terraform_apply,
+        mock_clone_repository, mock_build_docker_image_locally,
+        mock_get_ecr_login_details, mock_docker_from_env, mock_login_to_ecr,
+        mock_push_image_to_ecr, mock_mkdtemp, mock_rmtree
     ):
         # Setup mocked settings values
         mock_settings.PERSISTENT_WORKSPACE_BASE_DIR = self.test_persistent_workspaces
@@ -282,15 +293,53 @@ class TestOrchestrationService(unittest.IsolatedAsyncioTestCase):
 
         mock_uuid4.return_value.hex = "testuuid"
 
-        mock_path_instance = MagicMock()
-        mock_pathlib_Path.return_value = mock_path_instance # Return the same mock for all Path() calls
+        # Mock for persistent workspace_dir_path
+        mock_persistent_workspace_path_obj = MagicMock(spec=pathlib.Path)
 
-        mock_generate_ecr_tf_config.return_value = str(mock_path_instance / "test_ecr.tf")
-        mock_generate_eks_tf_config.return_value = str(mock_path_instance / "test_eks.tf")
+        # Mock for temporary clone_workspace_path
+        mock_temp_clone_dir_str = "/tmp/mcp_clone_ch_mock" # String path from mkdtemp
+        mock_mkdtemp.return_value = mock_temp_clone_dir_str
+
+        mock_cloned_repo_subdir_path_obj = MagicMock(spec=pathlib.Path) # Mocks Path(clone_workspace_path / repo_name_from_url)
+        mock_cloned_repo_subdir_path_obj.exists.return_value = True
+        mock_cloned_repo_subdir_path_obj.is_dir.return_value = True
+
+        mock_temp_clone_path_obj = MagicMock(spec=pathlib.Path) # Mocks Path(tempfile.mkdtemp(...)) returned string
+        mock_temp_clone_path_obj.__truediv__.return_value = mock_cloned_repo_subdir_path_obj # for / repo_name_from_url
+        mock_temp_clone_path_obj.exists.return_value = True # for the finally block check
+
+        # path_side_effect to handle different calls to pathlib.Path
+        # This allows Path(settings.PERSISTENT_WORKSPACE_BASE_DIR) and Path(mock_temp_clone_dir_str) to return different specialized mocks.
+        def path_side_effect_func(arg_path):
+            if str(arg_path) == mock_settings.PERSISTENT_WORKSPACE_BASE_DIR:
+                return mock_persistent_workspace_path_obj
+            elif str(arg_path) == mock_temp_clone_dir_str: # Result of tempfile.mkdtemp()
+                return mock_temp_clone_path_obj
+            # Default behavior for other Path calls (e.g., if Path is called with a fully constructed path string)
+            # This part might need refinement based on actual usage of Path() with arbitrary strings.
+            new_mock_path = MagicMock(spec=pathlib.Path)
+            new_mock_path.__str__.return_value = str(arg_path)
+            # If Path objects are used in boolean contexts (e.g. `if path_obj:`), they should be True.
+            # However, specific checks like `exists()` are usually what's needed.
+            return new_mock_path
+        mock_pathlib_Path.side_effect = path_side_effect_func
+
+        # Simulate the chained calls for persistent workspace path construction:
+        # e.g., workspace_dir_path = pathlib.Path(settings.PERSISTENT_WORKSPACE_BASE_DIR) / "cloud-hosted" / cluster_name
+        mock_ph_cloud_hosted_obj = MagicMock(spec=pathlib.Path)
+        mock_persistent_workspace_path_obj.__truediv__.return_value = mock_ph_cloud_hosted_obj
+        mock_ph_cluster_dir_obj = MagicMock(spec=pathlib.Path)
+        # Make the __str__ of this final path object predictable for assertions
+        # The actual cluster_name will be determined later in the test from settings and uuid
+        # So, we'll set its string representation dynamically if needed, or ensure calls to str() on it are handled.
+        mock_ph_cloud_hosted_obj.__truediv__.return_value = mock_ph_cluster_dir_obj
+
+        mock_generate_ecr_tf_config.return_value = str(mock_ph_cluster_dir_obj / "test_ecr.tf")
+        mock_generate_eks_tf_config.return_value = str(mock_ph_cluster_dir_obj / "test_eks.tf")
         mock_run_terraform_init.return_value = (True, "init_success_stdout", "")
 
         mock_tf_outputs = {
-            "ecr_repository_url": {"value": "test_ecr_url_output"},
+            "ecr_repository_url": {"value": "12345.dkr.ecr.us-east-1.amazonaws.com/mcp-app-test-repo-testuuid"},
             "ecr_repository_name": {"value": "mcp-app-test-repo-testuuid"},
             "eks_cluster_endpoint": {"value": "test_eks_ep_output"},
             "eks_cluster_ca_data": {"value": "test_ca_data"},
@@ -298,48 +347,102 @@ class TestOrchestrationService(unittest.IsolatedAsyncioTestCase):
         }
         mock_run_terraform_apply.return_value = (True, mock_tf_outputs, "apply_stdout", "")
 
+        # Mock ECR/Docker steps
+        mock_clone_repository.return_value = {"success": True, "cloned_path": str(mock_cloned_repo_subdir_path_obj)}
+        # Ensure the dynamically generated local_image_tag in the test matches what the code would generate for assertions.
+        # The code uses repo_name_from_url.lower() + "-mcp:" + uuid.uuid4().hex[:8]
+        # repo_name_from_url comes from self.repo_url ("https://github.com/test/repo.git") -> "repo"
+        # uuid.uuid4().hex[:8] is mocked to "testuuid"
+        # So local_image_tag = "repo-mcp:testuuid"
+        expected_local_tag_for_test = f"repo-mcp:{mock_uuid4.return_value.hex}"
+        mock_build_docker_image_locally.return_value = {"success": True, "image_id": "img123", "image_tags": [expected_local_tag_for_test]}
+
+        mock_ecr_registry_from_token = "https://12345.dkr.ecr.us-east-1.amazonaws.com"
+        mock_get_ecr_login_details.return_value = ("AWS", "ecr_pass_secret", mock_ecr_registry_from_token)
+
+        mock_docker_client_instance = MagicMock(spec=docker.DockerClient)
+        mock_docker_from_env.return_value = mock_docker_client_instance
+        mock_login_to_ecr.return_value = True
+
+        # pushed_image_uri = f"{clean_registry_url}/{ecr_repo_name}:{image_version_tag}"
+        # clean_registry_url = ecr_registry_from_token.replace("https://", "")
+        # ecr_repo_name = mock_tf_outputs["ecr_repository_name"]["value"]
+        # image_version_tag = "latest"
+        pushed_ecr_uri = f"{mock_ecr_registry_from_token.replace('https://', '')}/{mock_tf_outputs['ecr_repository_name']['value']}:latest"
+        mock_push_image_to_ecr.return_value = pushed_ecr_uri
+
+
         chat_request = ChatCompletionRequest(messages=[ChatMessage(role="user", content="deploy cloud hosted")])
 
         response = await handle_cloud_hosted_deployment(
             self.repo_url, self.namespace, self.aws_creds, chat_request
         )
 
-        expected_repo_name_part = "repo" # from self.repo_url
+        expected_repo_name_part = "repo"
         expected_cluster_name = f"{mock_settings.EKS_DEFAULT_CLUSTER_NAME_PREFIX}-{expected_repo_name_part}-testuuid"
         expected_ecr_repo_name_raw = f"{mock_settings.ECR_DEFAULT_REPO_NAME_PREFIX}-{expected_repo_name_part}-testuuid"
-        # Apply same sanitization as in the main function for ECR name
-        expected_ecr_repo_name = "".join(c if c.islower() or c.isdigit() or c in ['-', '_', '.'] else '-' for c in expected_ecr_repo_name_raw.lower()).strip('-_.')
-
+        expected_ecr_repo_name_sanitized = "".join(c if c.islower() or c.isdigit() or c in ['-', '_', '.'] else '-' for c in expected_ecr_repo_name_raw.lower()).strip('-_.')
 
         mock_pathlib_Path.assert_any_call(mock_settings.PERSISTENT_WORKSPACE_BASE_DIR)
-        expected_workspace_path = mock_pathlib_Path(mock_settings.PERSISTENT_WORKSPACE_BASE_DIR) / "cloud-hosted" / expected_cluster_name
-        mock_path_instance.mkdir.assert_called_with(parents=True, exist_ok=True)
+        mock_cluster_dir_obj.mkdir.assert_called_with(parents=True, exist_ok=True)
 
         ecr_context_arg = mock_generate_ecr_tf_config.call_args[0][0]
         self.assertEqual(ecr_context_arg["aws_region"], self.aws_creds.aws_region)
-        self.assertEqual(ecr_context_arg["ecr_repo_name"], expected_ecr_repo_name)
+        self.assertEqual(ecr_context_arg["ecr_repo_name"], expected_ecr_repo_name_sanitized)
         self.assertEqual(ecr_context_arg["image_tag_mutability"], mock_settings.ECR_DEFAULT_IMAGE_TAG_MUTABILITY)
         self.assertEqual(ecr_context_arg["scan_on_push"], mock_settings.ECR_DEFAULT_SCAN_ON_PUSH)
-        mock_generate_ecr_tf_config.assert_called_once_with(unittest.mock.ANY, str(expected_workspace_path))
+        mock_generate_ecr_tf_config.assert_called_once_with(unittest.mock.ANY, str(mock_cluster_dir_obj))
 
         eks_context_arg = mock_generate_eks_tf_config.call_args[0][0]
         self.assertEqual(eks_context_arg["cluster_name"], expected_cluster_name)
         self.assertEqual(eks_context_arg["node_group_name"], f"{expected_cluster_name}-{mock_settings.EKS_DEFAULT_NODE_GROUP_NAME_SUFFIX}")
-        mock_generate_eks_tf_config.assert_called_once_with(unittest.mock.ANY, str(expected_workspace_path))
+        mock_generate_eks_tf_config.assert_called_once_with(unittest.mock.ANY, str(mock_cluster_dir_obj))
 
         aws_env_vars_expected = {
             "AWS_ACCESS_KEY_ID": self.aws_creds.aws_access_key_id.get_secret_value(),
             "AWS_SECRET_ACCESS_KEY": self.aws_creds.aws_secret_access_key.get_secret_value(),
             "AWS_DEFAULT_REGION": self.aws_creds.aws_region,
         }
-        mock_run_terraform_init.assert_called_once_with(str(expected_workspace_path), aws_env_vars_expected)
-        mock_run_terraform_apply.assert_called_once_with(str(expected_workspace_path), aws_env_vars_expected)
+        mock_run_terraform_init.assert_called_once_with(str(mock_cluster_dir_obj), aws_env_vars_expected)
+        mock_run_terraform_apply.assert_called_once_with(str(mock_cluster_dir_obj), aws_env_vars_expected)
+
+        # Assert ECR/Docker calls
+        mock_mkdtemp.assert_called_once_with(prefix="mcp_clone_ch_")
+        mock_clone_repository.assert_called_once_with(self.repo_url, mock_temp_clone_dir_str)
+
+        mock_build_docker_image_locally.assert_called_once()
+        call_args_build = mock_build_docker_image_locally.call_args[0]
+        self.assertEqual(call_args_build[0], mock_cloned_repo_subdir_path_obj)
+        self.assertEqual(call_args_build[1], expected_local_tag_for_test)
+
+        mock_get_ecr_login_details.assert_called_once_with(
+            self.aws_creds.aws_region,
+            self.aws_creds.aws_access_key_id.get_secret_value(),
+            self.aws_creds.aws_secret_access_key.get_secret_value()
+        )
+        mock_docker_from_env.assert_called_once()
+        mock_login_to_ecr.assert_called_once_with(
+            mock_docker_client_instance,
+            mock_ecr_registry_from_token,
+            "AWS", "ecr_pass_secret"
+        )
+        mock_push_image_to_ecr.assert_called_once_with(
+            mock_docker_client_instance,
+            expected_local_tag_for_test,
+            mock_tf_outputs["ecr_repository_name"]["value"],
+            mock_ecr_registry_from_token,
+            "latest"
+        )
+
+        mock_rmtree.assert_called_once_with(str(mock_temp_clone_path_obj))
 
         self.assertEqual(response["status"], "success")
         self.assertEqual(response["instance_id"], expected_cluster_name)
-        self.assertEqual(response["ecr_repository_url"], "test_ecr_url_output")
+        self.assertEqual(response["ecr_repository_url"], mock_tf_outputs["ecr_repository_url"]["value"])
         self.assertEqual(response["eks_cluster_endpoint"], "test_eks_ep_output")
-        self.assertIn("EKS cluster 'mcp-eks-test-repo-testuuid' and ECR repository 'mcp-app-test-repo-testuuid' provisioned successfully!", chat_request.messages[-1].content)
+        self.assertEqual(response["pushed_image_uri"], pushed_ecr_uri)
+        self.assertIn(f"Application image pushed to: {pushed_ecr_uri}", chat_request.messages[-1].content)
+        self.assertIn("EKS, ECR, and application image push completed successfully.", response["message"])
 
 
     @patch('app.services.orchestration_service.terraform_service.generate_eks_tf_config')
@@ -470,6 +573,169 @@ class TestOrchestrationService(unittest.IsolatedAsyncioTestCase):
 
         eks_context_arg = mock_generate_eks_tf_config.call_args[0][0]
         self.assertEqual(eks_context_arg["cluster_name"], expected_cluster_name_override)
+
+
+    @patch('app.services.orchestration_service.shutil.rmtree')
+    @patch('app.services.orchestration_service.tempfile.mkdtemp', return_value="/mock/temp_clone_dir")
+    @patch('app.services.orchestration_service.git_service.clone_repository', return_value={"success": False, "error": "Clone failed miserably"})
+    @patch('app.services.orchestration_service.terraform_service.run_terraform_apply') # Assume TF part succeeds
+    @patch('app.services.orchestration_service.terraform_service.run_terraform_init', return_value=(True, "", ""))
+    @patch('app.services.orchestration_service.terraform_service.generate_eks_tf_config', return_value="path/to/eks.tf")
+    @patch('app.services.orchestration_service.terraform_service.generate_ecr_tf_config', return_value="path/to/ecr.tf")
+    @patch('app.services.orchestration_service.settings')
+    async def test_handle_cloud_hosted_deployment_clone_fails(
+        self, mock_settings, mock_gen_ecr, mock_gen_eks, mock_tf_init, mock_tf_apply,
+        mock_clone_repo, mock_mkdtemp, mock_rmtree):
+        mock_settings.PERSISTENT_WORKSPACE_BASE_DIR = self.test_persistent_workspaces
+        mock_tf_apply.return_value = (True, {"ecr_repository_url": {"value": "some_url"}, "ecr_repository_name": {"value":"some_repo"}}, "", "") # TF is fine
+
+        chat_request = ChatCompletionRequest(messages=[ChatMessage(role="user", content="deploy")])
+        # Need to mock Path for the finally block's clone_workspace_path.exists() check
+        with patch('app.services.orchestration_service.pathlib.Path') as mock_path_finally:
+            mock_clone_path_obj = MagicMock()
+            mock_clone_path_obj.exists.return_value = True # Assume it was created before failing
+            mock_path_finally.return_value = mock_clone_path_obj
+
+            response = await handle_cloud_hosted_deployment(self.repo_url, self.namespace, self.aws_creds, chat_request)
+
+        self.assertEqual(response["status"], "error")
+        self.assertIn("Failed to clone repository", response["message"])
+        self.assertIn("Clone failed miserably", chat_request.messages[-1].content)
+        mock_rmtree.assert_called_once_with(str(mock_clone_path_obj))
+
+
+    @patch('app.services.orchestration_service.shutil.rmtree')
+    @patch('app.services.orchestration_service.tempfile.mkdtemp', return_value="/mock/temp_clone_dir")
+    @patch('app.services.orchestration_service.docker_service.build_docker_image_locally', return_value={"success": False, "error": "Build exploded", "logs": "log log kaboom"})
+    @patch('app.services.orchestration_service.git_service.clone_repository') # Success
+    @patch('app.services.orchestration_service.terraform_service.run_terraform_apply') # TF Success
+    @patch('app.services.orchestration_service.terraform_service.run_terraform_init', return_value=(True, "", ""))
+    @patch('app.services.orchestration_service.terraform_service.generate_eks_tf_config', return_value="path/to/eks.tf")
+    @patch('app.services.orchestration_service.terraform_service.generate_ecr_tf_config', return_value="path/to/ecr.tf")
+    @patch('app.services.orchestration_service.settings')
+    async def test_handle_cloud_hosted_deployment_build_fails(
+        self, mock_settings, mock_gen_ecr, mock_gen_eks, mock_tf_init, mock_tf_apply,
+        mock_clone_repo, mock_build_image, mock_mkdtemp, mock_rmtree):
+        mock_settings.PERSISTENT_WORKSPACE_BASE_DIR = self.test_persistent_workspaces
+        mock_tf_apply.return_value = (True, {"ecr_repository_url": {"value": "some_url"}, "ecr_repository_name": {"value":"some_repo"}}, "", "")
+
+        # Mock for clone path and its subdirectories for build context
+        mock_cloned_repo_subdir_path_obj = MagicMock(spec=pathlib.Path)
+        mock_cloned_repo_subdir_path_obj.exists.return_value = True
+        mock_cloned_repo_subdir_path_obj.is_dir.return_value = True
+        mock_temp_clone_path_obj = MagicMock(spec=pathlib.Path)
+        mock_temp_clone_path_obj.__truediv__.return_value = mock_cloned_repo_subdir_path_obj
+        mock_temp_clone_path_obj.exists.return_value = True
+
+        # This setup is a bit complex due to Path being used multiple times for different things.
+        # We need clone_repository to use a Path object that gives the build context.
+        mock_clone_repo.return_value = {"success": True, "cloned_path": str(mock_cloned_repo_subdir_path_obj)}
+
+        chat_request = ChatCompletionRequest(messages=[ChatMessage(role="user", content="deploy")])
+        with patch('app.services.orchestration_service.pathlib.Path') as mock_path_finally:
+            # Mock Path specifically for the clone directory operations and the finally block
+            def path_side_effect_build_fail(arg_path):
+                if str(arg_path) == "/mock/temp_clone_dir": # Path(tempfile.mkdtemp(...))
+                    return mock_temp_clone_path_obj
+                # Fallback for persistent workspace paths (not the focus of this specific failure test part)
+                return MagicMock(spec=pathlib.Path)
+            mock_path_finally.side_effect = path_side_effect_build_fail
+
+            response = await handle_cloud_hosted_deployment(self.repo_url, self.namespace, self.aws_creds, chat_request)
+
+        self.assertEqual(response["status"], "error")
+        self.assertIn("Failed to build Docker image", response["message"])
+        self.assertIn("Build exploded", chat_request.messages[-1].content)
+        self.assertIn("log log kaboom", chat_request.messages[-1].content)
+        mock_rmtree.assert_called_once_with(str(mock_temp_clone_path_obj))
+
+
+    @patch('app.services.orchestration_service.shutil.rmtree')
+    @patch('app.services.orchestration_service.tempfile.mkdtemp', return_value="/mock/temp_clone_dir")
+    @patch('app.services.orchestration_service.docker_service.get_ecr_login_details', return_value=None)
+    @patch('app.services.orchestration_service.docker_service.build_docker_image_locally', return_value={"success": True})
+    @patch('app.services.orchestration_service.git_service.clone_repository', return_value={"success": True, "cloned_path": "/mock/clone/repo"})
+    @patch('app.services.orchestration_service.terraform_service.run_terraform_apply')
+    @patch('app.services.orchestration_service.terraform_service.run_terraform_init', return_value=(True, "", ""))
+    @patch('app.services.orchestration_service.terraform_service.generate_eks_tf_config', return_value="path/to/eks.tf")
+    @patch('app.services.orchestration_service.terraform_service.generate_ecr_tf_config', return_value="path/to/ecr.tf")
+    @patch('app.services.orchestration_service.settings')
+    async def test_handle_cloud_hosted_deployment_get_ecr_login_fails(
+        self, mock_settings, mock_gen_ecr, mock_gen_eks, mock_tf_init, mock_tf_apply,
+        mock_clone_repo, mock_build_image, mock_get_login_details, mock_mkdtemp, mock_rmtree):
+        mock_settings.PERSISTENT_WORKSPACE_BASE_DIR = self.test_persistent_workspaces
+        mock_tf_apply.return_value = (True, {"ecr_repository_url": {"value": "some_url"}, "ecr_repository_name": {"value":"some_repo"}}, "", "")
+
+        chat_request = ChatCompletionRequest(messages=[ChatMessage(role="user", content="deploy")])
+        with patch('app.services.orchestration_service.pathlib.Path') as mock_path_finally:
+            mock_clone_path_obj = MagicMock(); mock_clone_path_obj.exists.return_value = True
+            mock_path_finally.return_value = mock_clone_path_obj
+            response = await handle_cloud_hosted_deployment(self.repo_url, self.namespace, self.aws_creds, chat_request)
+
+        self.assertEqual(response["status"], "error")
+        self.assertIn("Failed to get ECR login credentials", response["message"])
+        mock_rmtree.assert_called_once_with(str(mock_clone_path_obj))
+
+
+    @patch('app.services.orchestration_service.shutil.rmtree')
+    @patch('app.services.orchestration_service.tempfile.mkdtemp', return_value="/mock/temp_clone_dir")
+    @patch('app.services.orchestration_service.docker_service.login_to_ecr', return_value=False)
+    @patch('app.services.orchestration_service.docker.from_env')
+    @patch('app.services.orchestration_service.docker_service.get_ecr_login_details', return_value=("user","pass","reg_url"))
+    @patch('app.services.orchestration_service.docker_service.build_docker_image_locally', return_value={"success": True})
+    @patch('app.services.orchestration_service.git_service.clone_repository', return_value={"success": True, "cloned_path": "/mock/clone/repo"})
+    @patch('app.services.orchestration_service.terraform_service.run_terraform_apply')
+    @patch('app.services.orchestration_service.terraform_service.run_terraform_init', return_value=(True, "", ""))
+    @patch('app.services.orchestration_service.terraform_service.generate_eks_tf_config', return_value="path/to/eks.tf")
+    @patch('app.services.orchestration_service.terraform_service.generate_ecr_tf_config', return_value="path/to/ecr.tf")
+    @patch('app.services.orchestration_service.settings')
+    async def test_handle_cloud_hosted_deployment_ecr_login_fails(
+        self, mock_settings, mock_gen_ecr, mock_gen_eks, mock_tf_init, mock_tf_apply,
+        mock_clone_repo, mock_build_image, mock_get_login_details, mock_docker_from_env,
+        mock_login_to_ecr, mock_mkdtemp, mock_rmtree):
+        mock_settings.PERSISTENT_WORKSPACE_BASE_DIR = self.test_persistent_workspaces
+        mock_tf_apply.return_value = (True, {"ecr_repository_url": {"value": "some_url"}, "ecr_repository_name": {"value":"some_repo"}}, "", "")
+
+        chat_request = ChatCompletionRequest(messages=[ChatMessage(role="user", content="deploy")])
+        with patch('app.services.orchestration_service.pathlib.Path') as mock_path_finally:
+            mock_clone_path_obj = MagicMock(); mock_clone_path_obj.exists.return_value = True
+            mock_path_finally.return_value = mock_clone_path_obj
+            response = await handle_cloud_hosted_deployment(self.repo_url, self.namespace, self.aws_creds, chat_request)
+
+        self.assertEqual(response["status"], "error")
+        self.assertIn("ECR login failed", response["message"])
+        mock_rmtree.assert_called_once_with(str(mock_clone_path_obj))
+
+
+    @patch('app.services.orchestration_service.shutil.rmtree')
+    @patch('app.services.orchestration_service.tempfile.mkdtemp', return_value="/mock/temp_clone_dir")
+    @patch('app.services.orchestration_service.docker_service.push_image_to_ecr', return_value=None)
+    @patch('app.services.orchestration_service.docker_service.login_to_ecr', return_value=True)
+    @patch('app.services.orchestration_service.docker.from_env')
+    @patch('app.services.orchestration_service.docker_service.get_ecr_login_details', return_value=("user","pass","reg_url"))
+    @patch('app.services.orchestration_service.docker_service.build_docker_image_locally', return_value={"success": True})
+    @patch('app.services.orchestration_service.git_service.clone_repository', return_value={"success": True, "cloned_path": "/mock/clone/repo"})
+    @patch('app.services.orchestration_service.terraform_service.run_terraform_apply')
+    @patch('app.services.orchestration_service.terraform_service.run_terraform_init', return_value=(True, "", ""))
+    @patch('app.services.orchestration_service.terraform_service.generate_eks_tf_config', return_value="path/to/eks.tf")
+    @patch('app.services.orchestration_service.terraform_service.generate_ecr_tf_config', return_value="path/to/ecr.tf")
+    @patch('app.services.orchestration_service.settings')
+    async def test_handle_cloud_hosted_deployment_ecr_push_fails(
+        self, mock_settings, mock_gen_ecr, mock_gen_eks, mock_tf_init, mock_tf_apply,
+        mock_clone_repo, mock_build_image, mock_get_login_details, mock_docker_from_env,
+        mock_login_to_ecr, mock_push_image_to_ecr, mock_mkdtemp, mock_rmtree):
+        mock_settings.PERSISTENT_WORKSPACE_BASE_DIR = self.test_persistent_workspaces
+        mock_tf_apply.return_value = (True, {"ecr_repository_url": {"value": "some_url"}, "ecr_repository_name": {"value":"some_repo"}}, "", "")
+
+        chat_request = ChatCompletionRequest(messages=[ChatMessage(role="user", content="deploy")])
+        with patch('app.services.orchestration_service.pathlib.Path') as mock_path_finally:
+            mock_clone_path_obj = MagicMock(); mock_clone_path_obj.exists.return_value = True
+            mock_path_finally.return_value = mock_clone_path_obj
+            response = await handle_cloud_hosted_deployment(self.repo_url, self.namespace, self.aws_creds, chat_request)
+
+        self.assertEqual(response["status"], "error")
+        self.assertIn("Failed to push image to ECR", response["message"])
+        mock_rmtree.assert_called_once_with(str(mock_clone_path_obj))
 
 
 if __name__ == '__main__':

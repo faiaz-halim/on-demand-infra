@@ -13,6 +13,9 @@ from app.core.config import settings
 from app.services import terraform_service
 from app.services import ssh_service
 from app.services import manifest_service
+from app.services import docker_service # Added for ECR push
+from app.services import git_service    # Added for cloning repo
+import docker # Added for docker.from_env()
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -243,9 +246,9 @@ async def handle_cloud_hosted_deployment(
     chat_request: ChatCompletionRequest,
     instance_id_override: Optional[str] = None # Added
 ) -> Dict[str, Any]:
-    """Handles the cloud-hosted (EKS & ECR) deployment workflow."""
+    """Handles the cloud-hosted (EKS & ECR) deployment workflow, including local image build and ECR push."""
 
-    repo_name_from_url = repo_url.split('/')[-1].replace('.git', '').replace('_', '-')
+    repo_name_from_url = repo_url.split('/')[-1].replace('.git', '').replace('_', '-') # Used for local tag & clone dir
     unique_id_part = instance_id_override if instance_id_override else uuid.uuid4().hex[:8]
 
     # Validate and construct names
@@ -284,6 +287,7 @@ async def handle_cloud_hosted_deployment(
         await _append_message_to_chat(chat_request, "assistant", f"Configuration Error: {err_msg}")
         return {"status": "error", "mode": "cloud-hosted", "message": err_msg}
 
+    clone_workspace_path: Optional[pathlib.Path] = None # Define here for visibility in finally
     try:
         # 1. Generate ECR Terraform Config
         await _append_message_to_chat(chat_request, "assistant", f"Generating Terraform configuration for ECR repository '{ecr_repo_name}'...")
@@ -352,30 +356,142 @@ async def handle_cloud_hosted_deployment(
             await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}. Manual cleanup of AWS resources for '{cluster_name}' might be needed, or use the decommission action.")
             return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name, "outputs": outputs if outputs else {}}
 
-        # 4. Process Outputs & Success
-        ecr_url = outputs.get("ecr_repository_url", {}).get("value", "Not available")
-        actual_ecr_name = outputs.get("ecr_repository_name", {}).get("value", ecr_repo_name) # Fallback to generated name
+        # 4. Process Outputs from Terraform
+        tf_ecr_repo_url_output = outputs.get("ecr_repository_url", {}).get("value") # This is <account_id>.dkr.ecr.<region>.amazonaws.com/<repo_name>
+        tf_ecr_repo_name_output = outputs.get("ecr_repository_name", {}).get("value", ecr_repo_name) # Fallback to generated name
         eks_endpoint = outputs.get("eks_cluster_endpoint", {}).get("value", "Not available")
-        eks_ca_data = outputs.get("eks_cluster_ca_data", {}).get("value", None) # CA data can be long, handle if None
+        eks_ca_data = outputs.get("eks_cluster_ca_data", {}).get("value", None)
         vpc_id = outputs.get("vpc_id", {}).get("value", "Not available")
 
-        success_message = (
-            f"Cloud-hosted EKS cluster '{cluster_name}' and ECR repository '{actual_ecr_name}' provisioned successfully!\n"
-            f"ECR Repository URL: {ecr_url}\n"
+        if not tf_ecr_repo_url_output:
+            err_msg = "ECR repository URL not found in Terraform outputs. Cannot proceed with image push."
+            logger.error(err_msg)
+            await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+            return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
+
+        await _append_message_to_chat(chat_request, "assistant",
+            f"EKS & ECR infrastructure provisioned. ECR Repo: {tf_ecr_repo_name_output}, EKS Endpoint: {eks_endpoint}. Now building and pushing image...")
+
+        # 5. Clone User's Repo Locally
+        clone_workspace_path = pathlib.Path(tempfile.mkdtemp(prefix="mcp_clone_ch_"))
+        logger.info(f"Created temporary clone workspace: {clone_workspace_path}")
+        await _append_message_to_chat(chat_request, "assistant", f"Cloning repository {repo_url} locally for image build...")
+
+        cloned_repo_details = await asyncio.to_thread(git_service.clone_repository, repo_url, str(clone_workspace_path))
+        if not cloned_repo_details or not cloned_repo_details.get("success"):
+            err_msg = f"Failed to clone repository {repo_url}: {cloned_repo_details.get('error', 'Unknown error')}"
+            logger.error(err_msg)
+            await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+            # No need to rmtree here, finally block will handle it.
+            return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
+
+        # Assuming clone_repository clones into a subdirectory named after the repo
+        actual_cloned_path = clone_workspace_path / repo_name_from_url
+        if not actual_cloned_path.exists() or not actual_cloned_path.is_dir():
+             # If git_service.clone_repository puts it directly in clone_workspace_path:
+             actual_cloned_path = clone_workspace_path
+             if not actual_cloned_path.exists() or not actual_cloned_path.is_dir():
+                err_msg = f"Cloned repository directory structure unexpected or not found at {actual_cloned_path} or {clone_workspace_path}"
+                logger.error(err_msg)
+                await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+                return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
+
+        logger.info(f"Repository cloned to {actual_cloned_path}")
+
+        # 6. Build Docker Image Locally
+        local_image_tag = f"{repo_name_from_url.lower()}-mcp:{uuid.uuid4().hex[:8]}"
+        await _append_message_to_chat(chat_request, "assistant", f"Building Docker image {local_image_tag} locally...")
+        build_result = await asyncio.to_thread(docker_service.build_docker_image_locally, actual_cloned_path, local_image_tag)
+        build_logs = build_result.get('logs', '')
+        logger.info(f"Docker build logs for {local_image_tag}:\n{build_logs}")
+
+        if not build_result.get("success"):
+            err_msg = f"Failed to build Docker image {local_image_tag}: {build_result.get('error', 'Unknown build error')}"
+            logger.error(err_msg)
+            # Provide a snippet of build logs if available
+            log_snippet = build_logs[-500:] if build_logs else "No logs available."
+            await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}\nBuild Log Snippet:\n{log_snippet}")
+            return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
+
+        await _append_message_to_chat(chat_request, "assistant", f"Docker image {local_image_tag} built successfully.")
+
+        # 7. ECR Login
+        await _append_message_to_chat(chat_request, "assistant", "Authenticating with AWS ECR...")
+        login_details = await asyncio.to_thread(
+            docker_service.get_ecr_login_details,
+            aws_creds.aws_region,
+            aws_creds.aws_access_key_id.get_secret_value(),
+            aws_creds.aws_secret_access_key.get_secret_value()
+        )
+        if not login_details:
+            err_msg = "Failed to get ECR login credentials."
+            logger.error(err_msg)
+            await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+            return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
+
+        ecr_username, ecr_password, ecr_registry_from_token = login_details
+
+        try:
+            docker_client_instance = docker.from_env()
+        except Exception as e:
+            err_msg = f"Failed to initialize Docker client for ECR login: {str(e)}"
+            logger.error(err_msg, exc_info=True)
+            await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+            return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
+
+        login_ok = await asyncio.to_thread(
+            docker_service.login_to_ecr,
+            docker_client_instance,
+            ecr_registry_from_token, # This is like https://<account_id>.dkr.ecr.<region>.amazonaws.com
+            ecr_username,
+            ecr_password
+        )
+        if not login_ok:
+            err_msg = "ECR login failed."
+            logger.error(err_msg)
+            await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+            return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
+
+        await _append_message_to_chat(chat_request, "assistant", "Successfully authenticated with ECR.")
+
+        # 8. Push Image to ECR
+        # Use tf_ecr_repo_name_output (actual name from TF) and ecr_registry_from_token (registry part)
+        await _append_message_to_chat(chat_request, "assistant", f"Pushing image {local_image_tag} to ECR repository {tf_ecr_repo_name_output}...")
+        pushed_image_uri = await asyncio.to_thread(
+            docker_service.push_image_to_ecr,
+            docker_client_instance,
+            local_image_tag,
+            tf_ecr_repo_name_output,
+            ecr_registry_from_token, # Pass the registry URL, push_image_to_ecr will format it
+            image_version_tag="latest" # Or use a more specific tag from build
+        )
+        if not pushed_image_uri:
+            err_msg = f"Failed to push image {local_image_tag} to ECR repository {tf_ecr_repo_name_output}."
+            logger.error(err_msg)
+            await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+            return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
+
+        await _append_message_to_chat(chat_request, "assistant", f"Image successfully pushed to ECR: {pushed_image_uri}")
+
+        # Final Success Message
+        final_success_message = (
+            f"Cloud-hosted EKS cluster '{cluster_name}' and ECR repository '{tf_ecr_repo_name_output}' provisioned successfully!\n"
+            f"Application image pushed to: {pushed_image_uri}\n"
             f"EKS Cluster Endpoint: {eks_endpoint}\n"
             f"VPC ID: {vpc_id}\n"
             f"Instance ID for management: {cluster_name}"
         )
-        logger.info(success_message)
-        await _append_message_to_chat(chat_request, "assistant", success_message)
+        logger.info(final_success_message)
+        await _append_message_to_chat(chat_request, "assistant", final_success_message)
 
         return {
             "status": "success",
             "mode": "cloud-hosted",
-            "message": "EKS and ECR provisioned successfully.",
-            "instance_id": cluster_name, # Using cluster_name as the manageable ID
-            "ecr_repository_url": ecr_url,
-            "ecr_repository_name": actual_ecr_name,
+            "message": "EKS, ECR, and application image push completed successfully.",
+            "instance_id": cluster_name,
+            "ecr_repository_url": tf_ecr_repo_url_output, # From TF output
+            "ecr_repository_name": tf_ecr_repo_name_output, # From TF output
+            "pushed_image_uri": pushed_image_uri, # From docker push
             "eks_cluster_endpoint": eks_endpoint,
             "eks_cluster_ca_data": eks_ca_data,
             "vpc_id": vpc_id,
@@ -387,6 +503,15 @@ async def handle_cloud_hosted_deployment(
         logger.error(err_msg, exc_info=True)
         await _append_message_to_chat(chat_request, "assistant", f"Critical Error: {err_msg}")
         return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
+    finally:
+        if clone_workspace_path and clone_workspace_path.exists():
+            try:
+                await asyncio.to_thread(shutil.rmtree, str(clone_workspace_path))
+                logger.info(f"Successfully cleaned up temporary clone workspace: {clone_workspace_path}")
+            except Exception as e_clean:
+                logger.error(f"Failed to cleanup temporary clone workspace {clone_workspace_path}: {e_clean}", exc_info=True)
+                # Optionally, append a warning to chat about cleanup failure if critical
+                await _append_message_to_chat(chat_request, "assistant", f"Warning: Failed to cleanup temporary clone directory {clone_workspace_path}. Manual cleanup may be required.")
 
 
 async def handle_cloud_local_scale(
