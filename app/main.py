@@ -3,6 +3,10 @@ from app.routers import chat
 from app.core.logging_config import logger as app_logger # Use the main logger
 from app.core.config import settings # To log settings at startup if desired
 
+# Tool registration imports
+from app.services.tool_service import register_tool
+from app.tools.search_tools import web_search, WEB_SEARCH_TOOL_SCHEMA
+
 app = FastAPI(
     title="MCP Server",
     version="0.1.0",
@@ -16,7 +20,15 @@ async def startup_event():
         app_logger.warning("Azure OpenAI API Key or Endpoint is not configured.")
     else:
         app_logger.info("Azure OpenAI client configured.")
-    # You can add more startup logging here, e.g., for other services
+
+    # Register tools
+    app_logger.info("Registering tools...")
+    try:
+        register_tool("web_search", web_search, WEB_SEARCH_TOOL_SCHEMA)
+        app_logger.info("Tools registered successfully.")
+    except Exception as e:
+        app_logger.exception(f"An error occurred during tool registration: {e}")
+
 
 @app.get("/health", tags=["General"])
 async def health_check():
@@ -28,9 +40,8 @@ app.include_router(chat.router)
 
 if __name__ == "__main__":
     import uvicorn
-    # Uvicorn will use its own logging configuration by default for access logs.
-    # Our application logs will go through the mcp_server_logger.
-    # To customize Uvicorn's logging, you'd pass a log_config dictionary to uvicorn.run()
-    # or use a separate uvicorn_log_config.json.
-    # For now, we focus on application logging.
+    # Note: Tool registration via @app.on_event("startup") works with `uvicorn app.main:app`.
+    # If running this file directly (`python app/main.py`), Uvicorn might not pick up lifespan events
+    # unless configured to do so or if the app instance is passed in a specific way.
+    # The standard way to run FastAPI with Uvicorn (`uvicorn app.main:app ...`) handles lifespan events.
     uvicorn.run(app, host="0.0.0.0", port=8000)
