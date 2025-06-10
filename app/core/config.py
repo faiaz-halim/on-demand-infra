@@ -1,7 +1,7 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional, List, Dict, Any
 import json
-import pathlib # For EC2_PRIVATE_KEY_BASE_PATH if we want to make it a Path object
+import pathlib
 
 class Settings(BaseSettings):
     # Azure OpenAI API settings
@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     # AWS settings
     AWS_ACCESS_KEY_ID: Optional[str] = None
     AWS_SECRET_ACCESS_KEY: Optional[str] = None
-    AWS_REGION: Optional[str] = "us-east-1" # Default region
+    AWS_REGION: Optional[str] = "us-east-1"
 
     # Logging configuration
     LOG_LEVEL: str = "INFO"
@@ -43,12 +43,13 @@ class Settings(BaseSettings):
 
     # EC2 SSH settings
     EC2_SSH_USERNAME: str = "ec2-user"
-    # Path on the MCP server where private keys for EC2 access might be stored.
-    # Example: /keys/ or ~/.ssh/. This MUST be configured securely by the admin.
-    # The application will append the 'key_name' (e.g., my-key.pem) to this base path.
     EC2_PRIVATE_KEY_BASE_PATH: Optional[str] = None
-    EC2_DEFAULT_REPO_PATH: str = "/home/ec2-user/app_repo" # Default path on EC2 for cloning repo
-    EC2_DEFAULT_REMOTE_MANIFEST_PATH: str = "/tmp/mcp_manifests" # Default path on EC2 for uploaded K8s manifests
+    EC2_DEFAULT_REPO_PATH: str = "/home/ec2-user/app_repo"
+    EC2_DEFAULT_REMOTE_MANIFEST_PATH: str = "/tmp/mcp_manifests"
+
+    # Persistent workspace for Terraform states, etc.
+    # Ensure this directory exists and is writable by the application.
+    PERSISTENT_WORKSPACE_BASE_DIR: str = "/app/mcp_workspaces"
 
 
     @property

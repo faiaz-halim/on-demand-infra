@@ -14,14 +14,54 @@
       "status": "done",
       "updatedAt": "2024-06-01T13:35:00Z",
       "subtasks": [
-        {"id": "1.1", "title": "Initialize Python Project (FastAPI)", "status": "done", "updatedAt": "2024-06-01T12:10:00Z"},
-        {"id": "1.2", "title": "Implement Configuration Management", "status": "done", "updatedAt": "2024-06-01T12:25:00Z"},
-        {"id": "1.3", "title": "Implement OpenAI Compatible API Endpoint (/v1/chat/completions)", "status": "done", "updatedAt": "2024-06-01T12:35:00Z"},
-        {"id": "1.4", "title": "Basic Azure OpenAI Integration for Chat", "status": "done", "updatedAt": "2024-06-01T12:45:00Z"},
-        {"id": "1.5", "title": "Implement Structured Logging System", "status": "done", "updatedAt": "2024-06-01T12:55:00Z"},
-        {"id": "1.6", "title": "Implement Git Clone Functionality for Public Repos", "status": "done", "updatedAt": "2024-06-01T13:05:00Z"},
-        {"id": "1.7", "title": "README.md Parsing for Build/Run Instructions", "status": "done", "updatedAt": "2024-06-01T13:20:00Z"},
-        {"id": "1.8", "title": "Dockerfile Detection and Basic Analysis", "status": "done", "updatedAt": "2024-06-01T13:35:00Z"}
+        {
+          "id": "1.1",
+          "title": "Initialize Python Project (FastAPI)",
+          "status": "done",
+          "updatedAt": "2024-06-01T12:10:00Z"
+        },
+        {
+          "id": "1.2",
+          "title": "Implement Configuration Management",
+          "status": "done",
+          "updatedAt": "2024-06-01T12:25:00Z"
+        },
+        {
+          "id": "1.3",
+          "title": "Implement OpenAI Compatible API Endpoint (/v1/chat/completions)",
+          "status": "done",
+          "updatedAt": "2024-06-01T12:35:00Z"
+        },
+        {
+          "id": "1.4",
+          "title": "Basic Azure OpenAI Integration for Chat",
+          "status": "done",
+          "updatedAt": "2024-06-01T12:45:00Z"
+        },
+        {
+          "id": "1.5",
+          "title": "Implement Structured Logging System",
+          "status": "done",
+          "updatedAt": "2024-06-01T12:55:00Z"
+        },
+        {
+          "id": "1.6",
+          "title": "Implement Git Clone Functionality for Public Repos",
+          "status": "done",
+          "updatedAt": "2024-06-01T13:05:00Z"
+        },
+        {
+          "id": "1.7",
+          "title": "README.md Parsing for Build/Run Instructions",
+          "status": "done",
+          "updatedAt": "2024-06-01T13:20:00Z"
+        },
+        {
+          "id": "1.8",
+          "title": "Dockerfile Detection and Basic Analysis",
+          "status": "done",
+          "updatedAt": "2024-06-01T13:35:00Z"
+        }
       ]
     },
     {
@@ -31,8 +71,18 @@
       "status": "done",
       "updatedAt": "2024-06-01T14:30:00Z",
       "subtasks": [
-        {"id": "2.1", "title": "Implement Dockerfile Best Practice Checks", "status": "done", "updatedAt": "2024-06-01T14:20:00Z"},
-        {"id": "2.2", "title": "Local Docker Image Building Service", "status": "done", "updatedAt": "2024-06-01T14:30:00Z"}
+        {
+          "id": "2.1",
+          "title": "Implement Dockerfile Best Practice Checks",
+          "status": "done",
+          "updatedAt": "2024-06-01T14:20:00Z"
+        },
+        {
+          "id": "2.2",
+          "title": "Local Docker Image Building Service",
+          "status": "done",
+          "updatedAt": "2024-06-01T14:30:00Z"
+        }
       ]
     },
     {
@@ -42,11 +92,36 @@
       "status": "done",
       "updatedAt": "2024-06-01T15:00:00Z",
       "subtasks": [
-        {"id": "3.1", "title": "Kind Cluster Detection and Creation Logic", "status": "done", "updatedAt": "2024-06-01T15:00:00Z"},
-        {"id": "3.2", "title": "Kubernetes Manifest Generation for Local Mode", "status": "done", "updatedAt": "2024-06-01T15:00:00Z"},
-        {"id": "3.3", "title": "Load Local Docker Images into Kind Cluster", "status": "done", "updatedAt": "2024-06-01T15:00:00Z"},
-        {"id": "3.4", "title": "Application Lifecycle Management in Kind (Local Mode)", "status": "done", "updatedAt": "2024-06-01T15:00:00Z"},
-        {"id": "3.5", "title": "Develop Foundational Terraform Generation Logic (Kind Config)", "status": "done", "updatedAt": "2024-06-01T15:00:00Z"}
+        {
+          "id": "3.1",
+          "title": "Kind Cluster Detection and Creation Logic",
+          "status": "done",
+          "updatedAt": "2024-06-01T15:00:00Z"
+        },
+        {
+          "id": "3.2",
+          "title": "Kubernetes Manifest Generation for Local Mode",
+          "status": "done",
+          "updatedAt": "2024-06-01T15:00:00Z"
+        },
+        {
+          "id": "3.3",
+          "title": "Load Local Docker Images into Kind Cluster",
+          "status": "done",
+          "updatedAt": "2024-06-01T15:00:00Z"
+        },
+        {
+          "id": "3.4",
+          "title": "Application Lifecycle Management in Kind (Local Mode)",
+          "status": "done",
+          "updatedAt": "2024-06-01T15:00:00Z"
+        },
+        {
+          "id": "3.5",
+          "title": "Develop Foundational Terraform Generation Logic (Kind Config)",
+          "status": "done",
+          "updatedAt": "2024-06-01T15:00:00Z"
+        }
       ]
     },
     {
@@ -56,8 +131,18 @@
       "status": "done",
       "updatedAt": "2024-06-01T15:05:00Z",
       "subtasks": [
-        {"id": "4.1", "title": "Implement Cloud-Local Mode Selection Logic", "status": "done", "updatedAt": "2024-06-01T15:05:00Z"},
-        {"id": "4.2", "title": "Secure AWS Credential Input and Handling", "status": "done", "updatedAt": "2024-06-01T15:05:00Z"}
+        {
+          "id": "4.1",
+          "title": "Implement Cloud-Local Mode Selection Logic",
+          "status": "done",
+          "updatedAt": "2024-06-01T15:05:00Z"
+        },
+        {
+          "id": "4.2",
+          "title": "Secure AWS Credential Input and Handling",
+          "status": "done",
+          "updatedAt": "2024-06-01T15:05:00Z"
+        }
       ]
     },
     {
@@ -67,9 +152,24 @@
       "status": "done",
       "updatedAt": "2024-06-01T15:10:00Z",
       "subtasks": [
-        {"id": "5.1", "title": "Terraform Module for EC2 Instance Provisioning", "status": "done", "updatedAt": "2024-06-01T15:10:00Z"},
-        {"id": "5.2", "title": "User-Data/Provisioner Scripts for EC2 Prerequisites", "status": "done", "updatedAt": "2024-06-01T15:10:00Z"},
-        {"id": "5.3", "title": "Integrate Terraform Execution for EC2 Setup", "status": "done", "updatedAt": "2024-06-01T15:10:00Z"}
+        {
+          "id": "5.1",
+          "title": "Terraform Module for EC2 Instance Provisioning",
+          "status": "done",
+          "updatedAt": "2024-06-01T15:10:00Z"
+        },
+        {
+          "id": "5.2",
+          "title": "User-Data/Provisioner Scripts for EC2 Prerequisites",
+          "status": "done",
+          "updatedAt": "2024-06-01T15:10:00Z"
+        },
+        {
+          "id": "5.3",
+          "title": "Integrate Terraform Execution for EC2 Setup",
+          "status": "done",
+          "updatedAt": "2024-06-01T15:10:00Z"
+        }
       ]
     },
     {
@@ -133,12 +233,31 @@
       "id": 8,
       "title": "Phase 2: Lifecycle Management (Cloud-Local)",
       "description": "Implement application redeployment, scaling (within Kind on EC2), and decommissioning (Terraform destroy of EC2 setup) for the 'cloud-local' mode.",
-      "status": "pending",
+      "status": "done",
       "subtasks": [
-        {"id": "8.1", "title": "Implement Redeployment for Cloud-Local", "status": "pending"},
-        {"id": "8.2", "title": "Implement Scaling for Cloud-Local (In-Kind)", "status": "pending"},
-        {"id": "8.3", "title": "Implement Decommissioning for Cloud-Local", "status": "pending"}
-      ]
+        {
+          "id": "8.1",
+          "title": "Implement Redeployment for Cloud-Local",
+          "status": "done",
+          "updatedAt": "2024-06-01T15:20:00Z",
+          "description": "Allow updating the application in the Kind cluster on EC2 with a new image or configuration."
+        },
+        {
+          "id": "8.2",
+          "title": "Implement Scaling for Cloud-Local (In-Kind)",
+          "status": "done",
+          "updatedAt": "2024-06-01T15:20:00Z",
+          "description": "Allow scaling the application deployment within the Kind cluster on EC2."
+        },
+        {
+          "id": "8.3",
+          "title": "Implement Decommissioning for Cloud-Local",
+          "status": "done",
+          "updatedAt": "2024-06-01T15:20:00Z",
+          "description": "Provide functionality to completely remove the 'cloud-local' environment by destroying the Terraform-managed EC2 instance and related AWS resources."
+        }
+      ],
+      "updatedAt": "2024-06-01T15:20:00Z"
     },
     {
       "id": 9,
@@ -146,10 +265,26 @@
       "description": "Implement 'cloud-hosted' mode logic and Terraform for EKS cluster and ECR repository.",
       "status": "pending",
       "subtasks": [
-        {"id": "9.1", "title": "Implement Cloud-Hosted Mode Selection Logic", "status": "pending"},
-        {"id": "9.2", "title": "Terraform Module for EKS Cluster Provisioning", "status": "pending"},
-        {"id": "9.3", "title": "Terraform Module for ECR Repository Creation", "status": "pending"},
-        {"id": "9.4", "title": "Integrate Terraform Execution for EKS/ECR Setup", "status": "pending"}
+        {
+          "id": "9.1",
+          "title": "Implement Cloud-Hosted Mode Selection Logic",
+          "status": "pending"
+        },
+        {
+          "id": "9.2",
+          "title": "Terraform Module for EKS Cluster Provisioning",
+          "status": "pending"
+        },
+        {
+          "id": "9.3",
+          "title": "Terraform Module for ECR Repository Creation",
+          "status": "pending"
+        },
+        {
+          "id": "9.4",
+          "title": "Integrate Terraform Execution for EKS/ECR Setup",
+          "status": "pending"
+        }
       ]
     },
     {
@@ -158,8 +293,16 @@
       "description": "Implement Docker image building using Docker-in-Docker (DinD) and push the image to the created ECR repository.",
       "status": "pending",
       "subtasks": [
-        {"id": "10.1", "title": "Setup Docker-in-Docker Build Environment/Logic", "status": "pending"},
-        {"id": "10.2", "title": "Implement ECR Login and Image Push", "status": "pending"}
+        {
+          "id": "10.1",
+          "title": "Setup Docker-in-Docker Build Environment/Logic",
+          "status": "pending"
+        },
+        {
+          "id": "10.2",
+          "title": "Implement ECR Login and Image Push",
+          "status": "pending"
+        }
       ]
     },
     {
@@ -168,11 +311,31 @@
       "description": "Deploy application to EKS, set up Nginx Ingress, AWS NLB, Route53, and ACM for SSL.",
       "status": "pending",
       "subtasks": [
-        {"id": "11.1", "title": "Kubernetes Manifest Generation for EKS Deployment", "status": "pending"},
-        {"id": "11.2", "title": "Terraform/Kubernetes for Nginx Ingress Controller in EKS", "status": "pending"},
-        {"id": "11.3", "title": "Kubernetes Ingress Resource Generation", "status": "pending"},
-        {"id": "11.4", "title": "Terraform for Route53 Subdomain and ACM Certificate", "status": "pending"},
-        {"id": "11.5", "title": "Apply Manifests and Provide User with HTTPS URL", "status": "pending"}
+        {
+          "id": "11.1",
+          "title": "Kubernetes Manifest Generation for EKS Deployment",
+          "status": "pending"
+        },
+        {
+          "id": "11.2",
+          "title": "Terraform/Kubernetes for Nginx Ingress Controller in EKS",
+          "status": "pending"
+        },
+        {
+          "id": "11.3",
+          "title": "Kubernetes Ingress Resource Generation",
+          "status": "pending"
+        },
+        {
+          "id": "11.4",
+          "title": "Terraform for Route53 Subdomain and ACM Certificate",
+          "status": "pending"
+        },
+        {
+          "id": "11.5",
+          "title": "Apply Manifests and Provide User with HTTPS URL",
+          "status": "pending"
+        }
       ]
     },
     {
@@ -181,9 +344,21 @@
       "description": "Implement application redeployment, scaling, and decommissioning for the 'cloud-hosted' EKS environment.",
       "status": "pending",
       "subtasks": [
-        {"id": "12.1", "title": "Implement Redeployment for Cloud-Hosted (EKS)", "status": "pending"},
-        {"id": "12.2", "title": "Implement Scaling for Cloud-Hosted (EKS)", "status": "pending"},
-        {"id": "12.3", "title": "Implement Decommissioning for Cloud-Hosted (EKS)", "status": "pending"}
+        {
+          "id": "12.1",
+          "title": "Implement Redeployment for Cloud-Hosted (EKS)",
+          "status": "pending"
+        },
+        {
+          "id": "12.2",
+          "title": "Implement Scaling for Cloud-Hosted (EKS)",
+          "status": "pending"
+        },
+        {
+          "id": "12.3",
+          "title": "Implement Decommissioning for Cloud-Hosted (EKS)",
+          "status": "pending"
+        }
       ]
     },
     {
@@ -192,11 +367,31 @@
       "description": "Focus on refining the system, comprehensive testing, security hardening, documentation, and ensuring smooth integration with external tools like Open WebUI.",
       "status": "pending",
       "subtasks": [
-        {"id": "13.1", "title": "Advanced API Compatibility & Frontend Testing (Open WebUI)", "status": "pending"},
-        {"id": "13.2", "title": "Comprehensive Security Review and Hardening", "status": "pending"},
-        {"id": "13.3", "title": "Robust Error Handling & User Feedback Enhancement", "status": "pending"},
-        {"id": "13.4", "title": "User Documentation Creation", "status": "pending"},
-        {"id": "13.5", "title": "Extensive End-to-End Testing", "status": "pending"}
+        {
+          "id": "13.1",
+          "title": "Advanced API Compatibility & Frontend Testing (Open WebUI)",
+          "status": "pending"
+        },
+        {
+          "id": "13.2",
+          "title": "Comprehensive Security Review and Hardening",
+          "status": "pending"
+        },
+        {
+          "id": "13.3",
+          "title": "Robust Error Handling & User Feedback Enhancement",
+          "status": "pending"
+        },
+        {
+          "id": "13.4",
+          "title": "User Documentation Creation",
+          "status": "pending"
+        },
+        {
+          "id": "13.5",
+          "title": "Extensive End-to-End Testing",
+          "status": "pending"
+        }
       ]
     }
   ]

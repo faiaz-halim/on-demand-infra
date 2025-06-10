@@ -32,15 +32,33 @@ class ChatCompletionRequest(BaseModel):
     logit_bias: Optional[Dict[str, float]] = None
     user: Optional[str] = None
 
-    # Custom MCP Server parameters
-    github_repo_url: Optional[str] = Field(default=None, description="URL of the GitHub repository to deploy.")
+    # --- Custom MCP Server parameters ---
+    # Deployment target and mode
+    github_repo_url: Optional[str] = Field(default=None, description="URL of the GitHub repository to deploy. If provided, an action is expected.")
     deployment_mode: Optional[Literal["local", "cloud-local", "cloud-hosted"]] = Field(default="local", description="The desired deployment mode.")
-    aws_credentials: Optional[AWSCredentials] = Field(default=None, description="AWS credentials, required for cloud-local and cloud-hosted modes.")
     target_namespace: Optional[str] = Field(default="default", description="Target Kubernetes namespace for the deployment.")
 
-    # Cloud-local specific parameters
+    # Lifecycle action and parameters
+    action: Optional[Literal["deploy", "redeploy", "scale", "decommission"]] = Field(
+        default="deploy",
+        description="The lifecycle action to perform. Defaults to 'deploy' if github_repo_url is provided. Other actions typically require 'instance_id'."
+    )
+    instance_id: Optional[str] = Field(
+        default=None,
+        description="Identifier of an existing instance/deployment to manage (e.g., for redeploy, scale, decommission). This often corresponds to the 'instance_name_tag' used during creation."
+    )
+    scale_replicas: Optional[int] = Field(
+        default=None,
+        description="Number of replicas to scale to for the 'scale' action."
+    )
+
+    # Cloud-specific parameters
+    aws_credentials: Optional[AWSCredentials] = Field(default=None, description="AWS credentials, required for cloud-local and cloud-hosted modes.")
     ec2_key_name: Optional[str] = Field(default=None, description="Name of the EC2 key pair to use for SSH access. Required for cloud-local mode if not set in server defaults.")
+    public_ip: Optional[str] = Field(default=None, description="Public IP of the EC2 instance to manage (e.g. for redeploy, scale actions on an existing cloud-local instance).")
     # instance_size: Optional[str] = Field(default=None, description="EC2 instance size for cloud-local mode. Overrides server default.")
+
+    # Application configuration (example, can be expanded)
     # application_environment_variables: Optional[Dict[str, str]] = Field(default_factory=dict, description="Environment variables for the application.")
 
 
