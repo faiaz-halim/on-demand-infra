@@ -4,7 +4,7 @@
     "version": "0.1.0",
     "prdSource": "prd.txt",
     "createdAt": "2024-06-01T12:00:00Z",
-    "updatedAt": "2024-06-01T18:30:00Z"
+    "updatedAt": "2024-06-01T20:00:00Z"
   },
   "tasks": [
     {
@@ -317,32 +317,38 @@
       "id": 11,
       "title": "Phase 3: EKS Deployment, Nginx Ingress, Networking & SSL (Cloud-Hosted)",
       "description": "Deploy application to EKS, set up Nginx Ingress, AWS NLB, Route53, and ACM for SSL.",
-      "status": "pending",
+      "status": "done",
+      "updatedAt": "2024-06-01T20:00:00Z",
       "subtasks": [
         {
           "id": "11.1",
           "title": "Kubernetes Manifest Generation for EKS Deployment",
-          "status": "pending"
+          "status": "done",
+          "updatedAt": "2024-06-01T20:00:00Z"
         },
         {
           "id": "11.2",
           "title": "Terraform/Kubernetes for Nginx Ingress Controller in EKS",
-          "status": "pending"
+          "status": "done",
+          "updatedAt": "2024-06-01T20:00:00Z"
         },
         {
           "id": "11.3",
           "title": "Kubernetes Ingress Resource Generation",
-          "status": "pending"
+          "status": "done",
+          "updatedAt": "2024-06-01T20:00:00Z"
         },
         {
           "id": "11.4",
           "title": "Terraform for Route53 Subdomain and ACM Certificate",
-          "status": "pending"
+          "status": "done",
+          "updatedAt": "2024-06-01T20:00:00Z"
         },
         {
           "id": "11.5",
           "title": "Apply Manifests and Provide User with HTTPS URL",
-          "status": "pending"
+          "status": "done",
+          "updatedAt": "2024-06-01T20:00:00Z"
         }
       ]
     },
