@@ -283,6 +283,65 @@ def generate_ecr_tf_config(context: Dict[str, Any], output_dir: str) -> Optional
         logger.error(f"An unexpected error occurred generating ECR Terraform config: {e}", exc_info=True)
         return None
 
+def generate_route53_acm_tf_config(context: Dict[str, Any], output_dir: str, filename_override: Optional[str] = None) -> Optional[str]:
+    """
+    Generates Terraform configuration for Route53 records and ACM certificate validation.
+    Saves the .tf file to the specified output directory.
+    If filename_override is provided, it's used as the filename.
+    """
+    if not jinja_env:
+        logger.error("Jinja2 environment not available for generate_route53_acm_tf_config.")
+        return None
+
+    from ..core.config import settings # Import settings if needed for defaults, though not used here
+
+    template_name = "terraform/aws/route53_acm.tf.j2"
+
+    required_keys = [
+        'aws_region',
+        'base_hosted_zone_id',
+        'app_full_domain_name',
+        'nlb_dns_name',
+        'nlb_hosted_zone_id'
+    ]
+    for key in required_keys:
+        if key not in context:
+            logger.error(f"Missing required key '{key}' in context for generating Route53/ACM Terraform config.")
+            return None
+
+    output_file_path = None
+    try:
+        template = jinja_env.get_template(template_name)
+        rendered_config = template.render(context)
+
+        output_path = pathlib.Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+
+        if filename_override:
+            output_filename = filename_override if filename_override.endswith(".tf") else f"{filename_override}.tf"
+        else:
+            app_domain_name_for_file = context['app_full_domain_name'].replace('.', '_') # Sanitize for filename
+            output_filename = f"{app_domain_name_for_file}_route53_acm.tf"
+
+        output_file_path = output_path / output_filename
+
+        with open(output_file_path, 'w') as f:
+            f.write(rendered_config)
+
+        logger.info(f"Successfully generated Route53/ACM Terraform config: {output_file_path}")
+        return str(output_file_path.resolve())
+
+    except jinja2.TemplateNotFound:
+        logger.error(f"Template '{template_name}' not found in {TEMPLATE_BASE_DIR}", exc_info=True)
+        return None
+    except IOError as e:
+        log_path = output_file_path if output_file_path else output_dir
+        logger.error(f"IOError writing Route53/ACM Terraform config to {log_path}: {e}", exc_info=True)
+        return None
+    except Exception as e:
+        logger.error(f"An unexpected error occurred generating Route53/ACM Terraform config: {e}", exc_info=True)
+        return None
+
 # --- Terraform CLI Execution Functions ---
 # ... (These functions remain as previously implemented) ...
 def _run_terraform_command(command_args: List[str], tf_dir: str, env_vars: Optional[Dict[str, str]] = None) -> subprocess.CompletedProcess:

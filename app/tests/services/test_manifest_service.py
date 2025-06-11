@@ -6,8 +6,10 @@ from app.services.manifest_service import (
     generate_deployment_manifest,
     generate_service_manifest,
     generate_secret_manifest,
-    TEMPLATE_DIR # To ensure templates are found during tests if Jinja env is re-initialized or checked
+    generate_ingress_manifest, # Added
+    TEMPLATE_DIR
 )
+from app.core.config import settings # Added for Ingress defaults
 
 # Configure basic logging for test visibility
 logging.basicConfig(level=logging.INFO)
@@ -211,6 +213,149 @@ class TestManifestService(unittest.TestCase):
         self.assertEqual(port1['targetPort'], 5001)
         self.assertNotIn('nodePort', port1, "nodePort should not be present for ClusterIP services")
         logger.info("test_generate_service_manifest_clusterip passed.")
+
+    # --- Tests for generate_ingress_manifest ---
+
+    def test_generate_ingress_manifest_basic_http(self):
+        logger.info("Testing generate_ingress_manifest_basic_http...")
+        context = {
+            "namespace": "test-ns",
+            "ingress_name": "my-app-ingress",
+            "host_name": "myapp.example.com",
+            "service_name": "my-app-svc",
+            "service_port": 8080
+        }
+        yaml_string = generate_ingress_manifest(context)
+        self.assertIsNotNone(yaml_string, "Generated YAML string should not be None")
+        if not yaml_string: self.fail("YAML string is empty") # Guard for linter
+
+        data = yaml.safe_load(yaml_string)
+
+        self._assert_metadata(data, context["ingress_name"], context["namespace"])
+        self.assertEqual(data['apiVersion'], 'networking.k8s.io/v1')
+        self.assertEqual(data['kind'], 'Ingress')
+
+        annotations = data['metadata']['annotations']
+        self.assertEqual(annotations['kubernetes.io/ingress.class'], 'nginx')
+        self.assertEqual(annotations['nginx.ingress.kubernetes.io/ssl-redirect'], str(settings.INGRESS_DEFAULT_SSL_REDIRECT).lower())
+        # Force SSL redirect depends on ssl_redirect value
+        expected_force_ssl = 'true' if settings.INGRESS_DEFAULT_SSL_REDIRECT else 'false'
+        self.assertEqual(annotations['nginx.ingress.kubernetes.io/force-ssl-redirect'], expected_force_ssl)
+
+        rule = data['spec']['rules'][0]
+        self.assertEqual(rule['host'], context["host_name"])
+        path_entry = rule['http']['paths'][0]
+        self.assertEqual(path_entry['backend']['service']['name'], context["service_name"])
+        self.assertEqual(path_entry['backend']['service']['port']['number'], context["service_port"])
+        self.assertEqual(path_entry['path'], settings.INGRESS_DEFAULT_HTTP_PATH)
+        self.assertEqual(path_entry['pathType'], settings.INGRESS_DEFAULT_PATH_TYPE)
+
+        self.assertNotIn('tls', data['spec'], "TLS spec should not be present for basic HTTP")
+        logger.info("test_generate_ingress_manifest_basic_http passed.")
+
+    def test_generate_ingress_manifest_with_acm_ssl(self):
+        logger.info("Testing generate_ingress_manifest_with_acm_ssl...")
+        context = {
+            "namespace": "secure-ns",
+            "ingress_name": "secure-app-ingress",
+            "host_name": "secure.example.com",
+            "service_name": "secure-app-svc",
+            "service_port": 443,
+            "acm_certificate_arn": "arn:aws:acm:us-west-2:123:certificate/abc"
+        }
+        yaml_string = generate_ingress_manifest(context)
+        self.assertIsNotNone(yaml_string)
+        if not yaml_string: self.fail("YAML string is empty")
+        data = yaml.safe_load(yaml_string)
+
+        annotations = data['metadata']['annotations']
+        self.assertEqual(annotations['service.beta.kubernetes.io/aws-load-balancer-ssl-cert'], context["acm_certificate_arn"])
+
+        self.assertIn('tls', data['spec'])
+        tls_spec = data['spec']['tls'][0]
+        self.assertEqual(tls_spec['hosts'][0], context["host_name"])
+        self.assertNotIn('secretName', tls_spec, "secretName should not be present when only ACM ARN is used for TLS host")
+        logger.info("test_generate_ingress_manifest_with_acm_ssl passed.")
+
+    def test_generate_ingress_manifest_with_tls_secret(self):
+        logger.info("Testing generate_ingress_manifest_with_tls_secret...")
+        context = {
+            "namespace": "tls-ns",
+            "ingress_name": "tls-app-ingress",
+            "host_name": "tls.example.com",
+            "service_name": "tls-app-svc",
+            "service_port": 8000,
+            "tls_secret_name": "myapp-tls-secret"
+        }
+        yaml_string = generate_ingress_manifest(context)
+        self.assertIsNotNone(yaml_string)
+        if not yaml_string: self.fail("YAML string is empty")
+        data = yaml.safe_load(yaml_string)
+
+        self.assertNotIn('service.beta.kubernetes.io/aws-load-balancer-ssl-cert', data['metadata']['annotations'])
+
+        self.assertIn('tls', data['spec'])
+        tls_spec = data['spec']['tls'][0]
+        self.assertEqual(tls_spec['hosts'][0], context["host_name"])
+        self.assertEqual(tls_spec['secretName'], context["tls_secret_name"])
+        logger.info("test_generate_ingress_manifest_with_tls_secret passed.")
+
+    def test_generate_ingress_manifest_with_custom_path_and_ssl_options(self):
+        logger.info("Testing generate_ingress_manifest_with_custom_path_and_ssl_options...")
+        context = {
+            "namespace": "custom-ns",
+            "ingress_name": "custom-app-ingress",
+            "host_name": "custom.example.com",
+            "service_name": "custom-app-svc",
+            "service_port": 9000,
+            "http_path": "/api/v1",
+            "path_type": "ImplementationSpecific",
+            "ssl_redirect": False # Test overriding default
+        }
+        yaml_string = generate_ingress_manifest(context)
+        self.assertIsNotNone(yaml_string)
+        if not yaml_string: self.fail("YAML string is empty")
+        data = yaml.safe_load(yaml_string)
+
+        annotations = data['metadata']['annotations']
+        self.assertEqual(annotations['nginx.ingress.kubernetes.io/ssl-redirect'], "false")
+        self.assertEqual(annotations['nginx.ingress.kubernetes.io/force-ssl-redirect'], "false") # Depends on ssl_redirect
+
+        path_entry = data['spec']['rules'][0]['http']['paths'][0]
+        self.assertEqual(path_entry['path'], context["http_path"])
+        self.assertEqual(path_entry['pathType'], context["path_type"])
+        logger.info("test_generate_ingress_manifest_with_custom_path_and_ssl_options passed.")
+
+    def test_generate_ingress_manifest_missing_required_context(self):
+        logger.info("Testing generate_ingress_manifest_missing_required_context...")
+        # Missing "host_name"
+        context = {
+            "namespace": "test-ns",
+            "ingress_name": "my-app-ingress",
+            # "host_name": "myapp.example.com", # Missing
+            "service_name": "my-app-svc",
+            "service_port": 8080
+        }
+        with self.assertLogs(logger='app.services.manifest_service', level='ERROR') as log_watcher:
+            yaml_string = generate_ingress_manifest(context)
+        self.assertIsNone(yaml_string)
+        self.assertTrue(any("Missing required key 'host_name'" in msg for msg in log_watcher.output))
+        logger.info("test_generate_ingress_manifest_missing_required_context passed.")
+
+    @patch('app.services.manifest_service.jinja_env.get_template')
+    def test_generate_ingress_manifest_template_not_found(self, mock_get_template):
+        logger.info("Testing generate_ingress_manifest_template_not_found...")
+        mock_get_template.side_effect = jinja2.TemplateNotFound("ingress.yaml.j2")
+        context = {
+            "namespace": "test-ns", "ingress_name": "my-app-ingress",
+            "host_name": "myapp.example.com", "service_name": "my-app-svc", "service_port": 8080
+        }
+        with self.assertLogs(logger='app.services.manifest_service', level='ERROR') as log_watcher:
+            yaml_string = generate_ingress_manifest(context)
+        self.assertIsNone(yaml_string)
+        self.assertTrue(any("Ingress template 'ingress.yaml.j2' not found" in msg for msg in log_watcher.output))
+        logger.info("test_generate_ingress_manifest_template_not_found passed.")
+
 
 if __name__ == '__main__':
     # This allows running the tests directly from this file

@@ -190,3 +190,44 @@ def generate_secret_manifest(
     except Exception as e:
         logger.error(f"Error generating secret manifest for '{secret_name}': {e}", exc_info=True)
         return ""
+
+
+def generate_ingress_manifest(context: Dict[str, Any]) -> Optional[str]:
+    """
+    Generates a Kubernetes Ingress manifest using a Jinja2 template.
+
+    Args:
+        context: A dictionary of context variables to pass to the template.
+                 Required keys: namespace, ingress_name, host_name, service_name, service_port.
+                 Optional keys: ssl_redirect, force_ssl_redirect, acm_certificate_arn,
+                                tls_secret_name, http_path, path_type.
+
+    Returns:
+        The generated Kubernetes Ingress manifest as a YAML string, or None on error.
+    """
+    if not jinja_env:
+        logger.error("Jinja2 environment not available for generate_ingress_manifest.")
+        return None
+
+    required_keys = ['namespace', 'ingress_name', 'host_name', 'service_name', 'service_port']
+    for key in required_keys:
+        if key not in context:
+            logger.error(f"Missing required key '{key}' in context for Ingress manifest generation.")
+            return None
+
+    # Set defaults for optional keys if not provided in context, directly in template is also an option
+    # context.setdefault('ssl_redirect', 'true') # Template handles defaults
+    # context.setdefault('http_path', '/')
+    # context.setdefault('path_type', 'Prefix')
+
+    try:
+        template = jinja_env.get_template("ingress.yaml.j2") # Path relative to TEMPLATE_DIR
+        rendered_manifest = template.render(context)
+        logger.info(f"Ingress manifest generated for '{context['ingress_name']}' in namespace '{context['namespace']}'.")
+        return rendered_manifest
+    except jinja2.TemplateNotFound:
+        logger.error(f"Ingress template 'ingress.yaml.j2' not found in {TEMPLATE_DIR}", exc_info=True)
+        return None
+    except Exception as e:
+        logger.error(f"Error generating ingress manifest for '{context.get('ingress_name', 'unknown_ingress')}': {e}", exc_info=True)
+        return None

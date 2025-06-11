@@ -1,0 +1,80 @@
+# route53_acm.tf.j2
+provider "aws" {
+  region = "{{ aws_region }}"
+}
+
+data "aws_route53_zone" "base" {
+  zone_id = "{{ base_hosted_zone_id }}"
+}
+
+resource "aws_acm_certificate" "app_cert" {
+  domain_name       = "{{ app_full_domain_name }}" # e.g., myapp.example.com
+  validation_method = "DNS"
+
+  tags = {
+    Name = "{{ app_full_domain_name }}-cert"
+    MCP-Deployment = "cloud-hosted"
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# DNS records for ACM certificate validation
+# ACM can request one or more validation records. This handles the common case of one.
+# For multiple, a for_each would be needed on aws_acm_certificate.domain_validation_options
+resource "aws_route53_record" "cert_validation_dns" {
+  # count = length(aws_acm_certificate.app_cert.domain_validation_options) # This makes it more robust for multiple validation records
+  # For now, assuming the first validation option is sufficient for many cases, or only one is provided for non-wildcard certs.
+  # A more robust solution would iterate through all domain_validation_options.
+  # For simplicity in this step, targeting the primary domain_name validation.
+
+  # Check if domain_validation_options is not empty and access the first element
+  # This requires the provider to run first to populate domain_validation_options.
+  # This is a common pattern with ACM DNS validation.
+
+  for_each = {
+    for dvo in aws_acm_certificate.app_cert.domain_validation_options : dvo.domain_name => {
+      name   = dvo.resource_record_name
+      record = dvo.resource_record_value
+      type   = dvo.resource_record_type
+    } if dvo.domain_name == "{{ app_full_domain_name }}" # Filter for the main domain if multiple SANs were ever used (not now)
+  }
+
+  allow_overwrite = true # Useful if re-running TF for a domain that previously had a different validation record
+  name            = each.value.name
+  records         = [each.value.record]
+  ttl             = 60
+  type            = each.value.type
+  zone_id         = data.aws_route53_zone.base.zone_id
+}
+
+# Wait for certificate validation
+resource "aws_acm_certificate_validation" "cert_validation_wait" {
+  certificate_arn         = aws_acm_certificate.app_cert.arn
+  validation_record_fqdns = [for record in aws_route53_record.cert_validation_dns : record.fqdn]
+}
+
+# Route53 Alias Record for the Application Load Balancer (from Nginx Ingress)
+resource "aws_route53_record" "app_alias_record" {
+  zone_id = data.aws_route53_zone.base.zone_id
+  name    = "{{ app_full_domain_name }}" # e.g., myapp.example.com
+  type    = "A"
+
+  alias {
+    name                   = "{{ nlb_dns_name }}" # DNS name of the NLB created by Nginx Ingress service
+    zone_id                = "{{ nlb_hosted_zone_id }}" # Hosted Zone ID of the NLB
+    evaluate_target_health = true
+  }
+}
+
+output "acm_certificate_arn" {
+  description = "The ARN of the validated ACM certificate."
+  value       = aws_acm_certificate_validation.cert_validation_wait.certificate_arn
+}
+
+output "app_url_https" {
+  description = "The HTTPS URL for the application."
+  value       = "https://{{ app_full_domain_name }}"
+}

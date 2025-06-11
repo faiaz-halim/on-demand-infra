@@ -15,11 +15,12 @@ from app.services.terraform_service import (
     generate_kind_config_yaml,
     generate_ec2_tf_config,
     generate_ec2_bootstrap_script,
-    generate_eks_tf_config, # Added for EKS tests
-    generate_ecr_tf_config, # Added for ECR tests
-    run_terraform_init,       # Added
-    run_terraform_apply,      # Added
-    run_terraform_destroy,    # Added
+    generate_eks_tf_config,
+    generate_ecr_tf_config,
+    generate_route53_acm_tf_config, # Added
+    run_terraform_init,
+    run_terraform_apply,
+    run_terraform_destroy,
     _run_terraform_command    # For testing CLI not found via this helper
 )
 # Access the configured Jinja2 environment from the service to mock its methods if needed
@@ -577,21 +578,127 @@ class TestTerraformService(unittest.TestCase):
         self.assertTrue(any("Template 'terraform/aws/ecr_repository.tf.j2' not found" in msg for msg in log_watcher.output))
         logger.info("test_generate_ecr_tf_config_template_not_found passed.")
 
+    # --- Tests for generate_route53_acm_tf_config ---
+
+    def test_generate_route53_acm_tf_config_success(self):
+        logger.info("Testing generate_route53_acm_tf_config_success...")
+        context = {
+            "aws_region": "us-east-1",
+            "base_hosted_zone_id": "Z123BASEID",
+            "app_full_domain_name": "app.example.com",
+            "nlb_dns_name": "my-nlb-dns.elb.amazonaws.com",
+            "nlb_hosted_zone_id": "ZNLBHOSTEDID"
+        }
+        with tempfile.TemporaryDirectory() as temp_dir_path:
+            tf_file_path = generate_route53_acm_tf_config(context.copy(), temp_dir_path)
+
+            self.assertIsNotNone(tf_file_path, "Should return a path string on success.")
+            output_file = pathlib.Path(tf_file_path)
+            self.assertTrue(output_file.exists(), f"Output file {output_file} should exist.")
+
+            with open(output_file, 'r') as f:
+                file_content = f.read()
+                # Using string checks as HCL parsing for complex for_each might be tricky
+                # and the template is relatively stable for these parts.
+
+            self.assertIn(f'region = "{context["aws_region"]}"', file_content)
+            self.assertIn(f'zone_id = "{context["base_hosted_zone_id"]}"', file_content) # For data source
+
+            # ACM Certificate
+            self.assertIn('resource "aws_acm_certificate" "app_cert"', file_content)
+            self.assertIn(f'domain_name       = "{context["app_full_domain_name"]}"', file_content)
+            self.assertIn('validation_method = "DNS"', file_content)
+
+            # Route53 Record for ACM validation
+            self.assertIn('resource "aws_route53_record" "cert_validation_dns"', file_content)
+            expected_for_each_str = "for dvo in aws_acm_certificate.app_cert.domain_validation_options : dvo.domain_name => {\n      name   = dvo.resource_record_name\n      record = dvo.resource_record_value\n      type   = dvo.resource_record_type\n    } if dvo.domain_name == "
+            # Remove newlines and multiple spaces for robust comparison
+            self.assertIn(''.join(expected_for_each_str.split()), ''.join(file_content.split()))
+            self.assertIn(f'if dvo.domain_name == "{context["app_full_domain_name"]}"', file_content)
+
+
+            # ACM Certificate Validation
+            self.assertIn('resource "aws_acm_certificate_validation" "cert_validation_wait"', file_content)
+            self.assertIn('certificate_arn         = aws_acm_certificate.app_cert.arn', file_content)
+            self.assertIn('validation_record_fqdns = [for record in aws_route53_record.cert_validation_dns : record.fqdn]', file_content)
+
+            # Route53 Alias Record for App
+            self.assertIn('resource "aws_route53_record" "app_alias_record"', file_content)
+            self.assertIn(f'name    = "{context["app_full_domain_name"]}"', file_content)
+            self.assertIn('type    = "A"', file_content)
+            self.assertIn(f'name                   = "{context["nlb_dns_name"]}"', file_content)
+            self.assertIn(f'zone_id                = "{context["nlb_hosted_zone_id"]}"', file_content) # For alias target
+            # Check that the app_alias_record uses the base_hosted_zone_id for its own zone_id
+            # This requires careful parsing or a more specific string search
+            self.assertTrue(file_content.count(f'zone_id = data.aws_route53_zone.base.zone_id') >= 2)
+
+
+            # Outputs
+            self.assertIn('output "acm_certificate_arn"', file_content)
+            self.assertIn('value       = aws_acm_certificate_validation.cert_validation_wait.certificate_arn', file_content)
+            self.assertIn('output "app_url_https"', file_content)
+            self.assertIn(f'value       = "https://{context["app_full_domain_name"]}"', file_content)
+
+        logger.info("test_generate_route53_acm_tf_config_success passed.")
+
+    def test_generate_route53_acm_tf_config_missing_required_context(self):
+        logger.info("Testing generate_route53_acm_tf_config_missing_required_context...")
+        base_context = {
+            "aws_region": "us-east-1",
+            "base_hosted_zone_id": "Z123BASEID",
+            "app_full_domain_name": "app.example.com",
+            "nlb_dns_name": "my-nlb-dns.elb.amazonaws.com",
+            "nlb_hosted_zone_id": "ZNLBHOSTEDID"
+        }
+
+        required_keys = ['base_hosted_zone_id', 'app_full_domain_name', 'nlb_dns_name', 'nlb_hosted_zone_id']
+
+        for key_to_remove in required_keys:
+            context = base_context.copy()
+            del context[key_to_remove]
+            with tempfile.TemporaryDirectory() as temp_dir_path:
+                with self.assertLogs(logger='app.services.terraform_service', level='ERROR') as log_watcher:
+                    tf_file_path = generate_route53_acm_tf_config(context, temp_dir_path)
+            self.assertIsNone(tf_file_path, f"Should fail when '{key_to_remove}' is missing.")
+            self.assertTrue(
+                any(f"Missing required key '{key_to_remove}'" in msg for msg in log_watcher.output),
+                f"Missing key log for '{key_to_remove}' not found."
+            )
+        logger.info("test_generate_route53_acm_tf_config_missing_required_context passed.")
+
+    @patch.object(ts, 'jinja_env')
+    def test_generate_route53_acm_tf_config_template_not_found(self, mock_jinja_env):
+        logger.info("Testing generate_route53_acm_tf_config_template_not_found...")
+        mock_jinja_env.get_template.side_effect = jinja2.TemplateNotFound("terraform/aws/route53_acm.tf.j2")
+        context = {
+            "aws_region": "us-east-1", "base_hosted_zone_id": "Z123", "app_full_domain_name": "app.example.com",
+            "nlb_dns_name": "nlb.dns", "nlb_hosted_zone_id": "ZNLB"
+        }
+        with tempfile.TemporaryDirectory() as temp_dir_path:
+            with self.assertLogs(logger='app.services.terraform_service', level='ERROR') as log_watcher:
+                tf_file_path = generate_route53_acm_tf_config(context, temp_dir_path)
+        self.assertIsNone(tf_file_path)
+        self.assertTrue(any("Template 'terraform/aws/route53_acm.tf.j2' not found" in msg for msg in log_watcher.output))
+        logger.info("test_generate_route53_acm_tf_config_template_not_found passed.")
+
 
 if __name__ == '__main__':
     expected_kind_template = ts.TEMPLATE_BASE_DIR / "kind/kind-config.yaml.j2"
     expected_ec2_template = ts.TEMPLATE_BASE_DIR / "terraform/aws/ec2_instance.tf.j2"
-    expected_eks_template = ts.TEMPLATE_BASE_DIR / "terraform/aws/eks_cluster.tf.j2" # Added for check
-    expected_ecr_template = ts.TEMPLATE_BASE_DIR / "terraform/aws/ecr_repository.tf.j2" # Added for check
+    expected_eks_template = ts.TEMPLATE_BASE_DIR / "terraform/aws/eks_cluster.tf.j2"
+    expected_ecr_template = ts.TEMPLATE_BASE_DIR / "terraform/aws/ecr_repository.tf.j2"
+    expected_route53_acm_template = ts.TEMPLATE_BASE_DIR / "terraform/aws/route53_acm.tf.j2" # Added
     expected_script_template = ts.TEMPLATE_BASE_DIR / "scripts/ec2_bootstrap.sh.j2"
     if not expected_kind_template.exists():
         logger.warning(f"Kind template {expected_kind_template} not found.")
     if not expected_ec2_template.exists():
         logger.warning(f"EC2 TF template {expected_ec2_template} not found.")
-    if not expected_eks_template.exists(): # Added for check
+    if not expected_eks_template.exists():
         logger.warning(f"EKS TF template {expected_eks_template} not found.")
-    if not expected_ecr_template.exists(): # Added for check
+    if not expected_ecr_template.exists():
         logger.warning(f"ECR TF template {expected_ecr_template} not found.")
+    if not expected_route53_acm_template.exists(): # Added
+        logger.warning(f"Route53/ACM TF template {expected_route53_acm_template} not found.")
     if not expected_script_template.exists():
         logger.warning(f"EC2 Bootstrap Script template {expected_script_template} not found.")
     unittest.main()

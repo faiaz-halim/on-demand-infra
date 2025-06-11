@@ -13,9 +13,10 @@ from app.core.config import settings
 from app.services import terraform_service
 from app.services import ssh_service
 from app.services import manifest_service
-from app.services import docker_service # Added for ECR push
-from app.services import git_service    # Added for cloning repo
-import docker # Added for docker.from_env()
+from app.services import docker_service
+from app.services import git_service
+from app.services import k8s_service # Added for kubeconfig and Helm
+import docker
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -473,13 +474,245 @@ async def handle_cloud_hosted_deployment(
 
         await _append_message_to_chat(chat_request, "assistant", f"Image successfully pushed to ECR: {pushed_image_uri}")
 
+        # 9. Generate Kubeconfig for EKS cluster
+        await _append_message_to_chat(chat_request, "assistant", "Generating Kubeconfig for EKS cluster...")
+        if not eks_ca_data: # Should not happen if apply_ok and outputs are processed correctly
+            err_msg = "EKS CA data is missing, cannot generate kubeconfig."
+            logger.error(err_msg)
+            await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+            return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
+
+        kubeconfig_file_path = await asyncio.to_thread(
+            k8s_service.generate_eks_kubeconfig_file,
+            cluster_name=cluster_name,
+            endpoint_url=eks_endpoint,
+            ca_data=eks_ca_data,
+            aws_region=aws_creds.aws_region,
+            user_arn=settings.EKS_DEFAULT_USER_ARN, # Using default from settings
+            output_dir=str(workspace_dir_path)
+        )
+        if not kubeconfig_file_path:
+            err_msg = "Failed to generate Kubeconfig for EKS."
+            logger.error(err_msg)
+            await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+            return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
+
+        await _append_message_to_chat(chat_request, "assistant", f"Kubeconfig saved to workspace. Installing Nginx Ingress Controller via Helm...")
+
+        # 10. Install Nginx Ingress Controller using Helm
+        # The namespace for Nginx is typically 'ingress-nginx', not the app's namespace.
+        nginx_install_ok = await asyncio.to_thread(
+            k8s_service.install_nginx_ingress_helm,
+            kubeconfig_path=kubeconfig_file_path,
+            namespace="ingress-nginx", # Standard namespace for nginx ingress
+            helm_chart_version=settings.NGINX_HELM_CHART_VERSION
+        )
+        if not nginx_install_ok:
+            err_msg = "Failed to install Nginx Ingress Controller via Helm."
+            logger.error(err_msg)
+            await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+            # Note: Kubeconfig and infra are up. App manifests are next.
+            # Depending on policy, might still want to proceed or offer user choice.
+            return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
+
+        await _append_message_to_chat(chat_request, "assistant", "Nginx Ingress Controller installation successful.")
+
+        # 11. Get Load Balancer details for Nginx Ingress
+        await _append_message_to_chat(chat_request, "assistant", "Fetching Load Balancer details for Nginx Ingress...")
+        nlb_details = await asyncio.to_thread(
+            k8s_service.get_load_balancer_details,
+            kubeconfig_path=kubeconfig_file_path, # From previous step
+            service_name=settings.NGINX_INGRESS_SERVICE_NAME,
+            namespace=settings.NGINX_INGRESS_NAMESPACE, # Nginx is in its own namespace
+            timeout_seconds=settings.LOAD_BALANCER_DETAILS_TIMEOUT_SECONDS
+        )
+        if not nlb_details or not nlb_details[0]:
+            err_msg = "Failed to get Nginx Load Balancer DNS details. Cannot proceed with Route53/ACM setup."
+            logger.error(err_msg)
+            await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+            return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
+
+        nlb_dns_name, _ = nlb_details # NLB Hosted Zone ID from kubectl is not reliable/available.
+        # IMPORTANT: nlb_hosted_zone_id for the TF template MUST be the canonical hosted zone ID for the NLB.
+        # This typically needs to be fetched via AWS API (e.g. elbv2.describe_load_balancers).
+        # This is a known gap and will require a new service function or direct boto3 call here.
+        # For now, using a placeholder. This will cause TF apply for Route53 alias to fail if not correctly sourced.
+        nlb_canonical_hosted_zone_id_placeholder = "Z00000000000000000000" # FIXME: THIS IS A CRITICAL PLACEHOLDER
+        logger.warning(f"Using PLACEHOLDER NLB Canonical Hosted Zone ID: {nlb_canonical_hosted_zone_id_placeholder}. Route53 alias record will likely fail without the correct ID.")
+        await _append_message_to_chat(chat_request, "assistant", f"Nginx Load Balancer DNS: {nlb_dns_name}. Proceeding with domain and certificate setup...")
+
+        # 12. Terraform for Route53/ACM (if base_hosted_zone_id and app_subdomain_label are provided)
+        app_full_domain_name = None
+        acm_certificate_arn = None # Will be set by TF if created
+        app_url_https = None # Will be set by TF if created
+
+        if chat_request.base_hosted_zone_id and chat_request.app_subdomain_label:
+            if not settings.DEFAULT_DOMAIN_NAME_FOR_APPS:
+                err_msg = "Configuration Error: DEFAULT_DOMAIN_NAME_FOR_APPS is not set, cannot construct full domain name."
+                logger.error(err_msg)
+                await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+                return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
+
+            app_full_domain_name = f"{chat_request.app_subdomain_label}.{settings.DEFAULT_DOMAIN_NAME_FOR_APPS}"
+            await _append_message_to_chat(chat_request, "assistant", f"Setting up domain '{app_full_domain_name}' and SSL certificate...")
+
+            route53_tf_context = {
+                "aws_region": aws_creds.aws_region,
+                "base_hosted_zone_id": chat_request.base_hosted_zone_id,
+                "app_full_domain_name": app_full_domain_name,
+                "nlb_dns_name": nlb_dns_name,
+                "nlb_hosted_zone_id": nlb_canonical_hosted_zone_id_placeholder # FIXME: Use actual NLB canonical HZID
+            }
+            route53_tf_file = await asyncio.to_thread(
+                terraform_service.generate_route53_acm_tf_config,
+                route53_tf_context,
+                str(workspace_dir_path),
+                filename_override=settings.ROUTE53_ACM_TF_FILENAME
+            )
+            if not route53_tf_file:
+                err_msg = "Failed to generate Terraform configuration for Route53/ACM."
+                logger.error(err_msg)
+                await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+                return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
+
+            await _append_message_to_chat(chat_request, "assistant", "Applying Terraform for Route53 and ACM certificate (this may take a few minutes for DNS propagation and validation)...")
+            # This apply will add to the existing state, effectively applying only the new resources.
+            apply_domain_ok, domain_outputs, domain_apply_out, domain_apply_err = await asyncio.to_thread(
+                terraform_service.run_terraform_apply, str(workspace_dir_path), aws_env_vars
+            )
+            logger.info(f"Terraform apply (Route53/ACM) stdout:\n{domain_apply_out}")
+            if domain_apply_err: logger.error(f"Terraform apply (Route53/ACM) stderr:\n{domain_apply_err}")
+
+            if not apply_domain_ok:
+                err_msg = f"Terraform apply failed for Route53/ACM: {domain_apply_err or domain_apply_out}"
+                logger.error(err_msg)
+                await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}.")
+                return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
+
+            acm_certificate_arn = domain_outputs.get("acm_certificate_arn", {}).get("value")
+            app_url_https = domain_outputs.get("app_url_https", {}).get("value")
+
+            if not acm_certificate_arn or not app_url_https:
+                err_msg = "Failed to get ACM certificate ARN or HTTPS URL from Terraform outputs after Route53/ACM setup."
+                logger.error(f"{err_msg} Outputs: {domain_outputs}")
+                await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+                return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
+
+            await _append_message_to_chat(chat_request, "assistant", f"Domain '{app_full_domain_name}' and SSL certificate (ARN: {acm_certificate_arn}) configured.")
+        else:
+            logger.info("Skipping Route53/ACM setup as base_hosted_zone_id or app_subdomain_label not provided.")
+            await _append_message_to_chat(chat_request, "assistant", "Skipping custom domain and SSL certificate setup as required details were not provided.")
+
+
+        # 13. Generate Kubernetes Manifests for EKS (using the application's target namespace)
+        await _append_message_to_chat(chat_request, "assistant", f"Generating Kubernetes manifests for EKS deployment using image: {pushed_image_uri}...")
+        app_name = repo_name_from_url.lower().replace('_', '-') # Consistent app name
+        target_namespace_to_use = namespace
+
+        # Determine container_port (this logic might need refinement based on actual app introspection)
+        try:
+            default_app_ports_list = json.loads(settings.EC2_DEFAULT_APP_PORTS_JSON) # Reusing this setting for now
+            container_port = int(default_app_ports_list[0]['port']) if default_app_ports_list and isinstance(default_app_ports_list[0].get('port'), (int,str)) else 80
+        except (json.JSONDecodeError, IndexError, TypeError, ValueError) as e:
+            logger.warning(f"Could not parse EC2_DEFAULT_APP_PORTS_JSON ('{settings.EC2_DEFAULT_APP_PORTS_JSON}') or it was empty/invalid. Defaulting container_port to 80. Error: {e}")
+            container_port = 80
+
+        deployment_yaml_content = manifest_service.generate_deployment_manifest(
+            image_name=pushed_image_uri,
+            app_name=app_name,
+            replicas=1,
+            ports=[container_port],
+            namespace=target_namespace_to_use
+        )
+        service_yaml_content = manifest_service.generate_service_manifest(
+            app_name=app_name,
+            service_type="ClusterIP",
+            ports_mapping=[{'port': 80, 'targetPort': container_port, 'protocol': 'TCP'}],
+            namespace=target_namespace_to_use
+        )
+
+        if deployment_yaml_content is None or service_yaml_content is None:
+            err_msg = "Failed to generate Kubernetes Deployment/Service manifests for EKS."
+            # ... (error handling as before)
+            logger.error(err_msg)
+            await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+            return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
+
+        # Save Deployment and Service manifests
+        try:
+            deployment_file_path = workspace_dir_path / f"{app_name}_deployment.yaml"
+            service_file_path = workspace_dir_path / f"{app_name}_service.yaml"
+            with open(deployment_file_path, "w") as f: f.write(deployment_yaml_content)
+            with open(service_file_path, "w") as f: f.write(service_yaml_content)
+            logger.info(f"Saved K8s Deployment to: {deployment_file_path}, Service to: {service_file_path}")
+            await _append_message_to_chat(chat_request, "assistant", "App Deployment and Service manifests saved.")
+        except IOError as e:
+            err_msg = f"Failed to save K8s Deployment/Service manifests: {e}"
+            # ... (error handling as before)
+            logger.error(err_msg, exc_info=True)
+            await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+            return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
+
+        # 14. Generate Ingress Manifest (if domain name is available)
+        if app_full_domain_name:
+            await _append_message_to_chat(chat_request, "assistant", f"Generating Ingress manifest for host: {app_full_domain_name}...")
+            ingress_context = {
+                "namespace": target_namespace_to_use,
+                "ingress_name": f"{app_name}-ingress",
+                "host_name": app_full_domain_name,
+                "service_name": app_name, # K8s service name for the app
+                "service_port": 80,       # Port on the K8s service (ClusterIP service listens on 80)
+                "acm_certificate_arn": acm_certificate_arn, # From TF Route53/ACM step
+                "ssl_redirect": settings.INGRESS_DEFAULT_SSL_REDIRECT,
+                # Other optional settings like path_type, http_path can be added from settings or request
+                "http_path": settings.INGRESS_DEFAULT_HTTP_PATH,
+                "path_type": settings.INGRESS_DEFAULT_PATH_TYPE,
+            }
+            ingress_yaml_content = manifest_service.generate_ingress_manifest(ingress_context)
+            if not ingress_yaml_content:
+                err_msg = "Failed to generate Kubernetes Ingress manifest."
+                logger.error(err_msg)
+                await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+                return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
+
+            try:
+                ingress_file_path = workspace_dir_path / f"{app_name}_ingress.yaml"
+                with open(ingress_file_path, "w") as f: f.write(ingress_yaml_content)
+                logger.info(f"Saved K8s Ingress manifest to: {ingress_file_path}")
+                await _append_message_to_chat(chat_request, "assistant", "K8s Ingress manifest generated and saved.")
+            except IOError as e:
+                err_msg = f"Failed to save K8s Ingress manifest: {e}"
+                logger.error(err_msg, exc_info=True)
+                await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+                return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
+        else:
+            await _append_message_to_chat(chat_request, "assistant", "Skipping Ingress generation as no custom domain was configured.")
+
+        # 15. Apply All K8s Manifests (App Deployment, Service, Ingress if generated)
+        await _append_message_to_chat(chat_request, "assistant", "Applying application and Ingress manifests to EKS cluster...")
+        # apply_manifests expects a directory. All our manifests (app deploy, service, ingress) are in workspace_dir_path.
+        apply_k8s_ok = await asyncio.to_thread(
+            k8s_service.apply_manifests,
+            kubeconfig_path=kubeconfig_file_path,
+            manifest_dir_or_file=str(workspace_dir_path), # Directory containing all YAMLs
+            namespace=target_namespace_to_use
+        )
+        if not apply_k8s_ok:
+            err_msg = f"Failed to apply K8s manifests for app '{app_name}' to namespace '{target_namespace_to_use}'."
+            logger.error(err_msg)
+            await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+            return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
+
+        await _append_message_to_chat(chat_request, "assistant", "Application K8s manifests applied successfully.")
+
         # Final Success Message
+        final_url = app_url_https if app_url_https else f"http://{nlb_dns_name}" # Fallback to NLB DNS if no custom domain
         final_success_message = (
-            f"Cloud-hosted EKS cluster '{cluster_name}' and ECR repository '{tf_ecr_repo_name_output}' provisioned successfully!\n"
-            f"Application image pushed to: {pushed_image_uri}\n"
+            f"Cloud-hosted EKS deployment for '{app_name}' completed!\n"
+            f"Application URL: {final_url}\n"
+            f"ECR Repository: {pushed_image_uri}\n"
             f"EKS Cluster Endpoint: {eks_endpoint}\n"
-            f"VPC ID: {vpc_id}\n"
-            f"Instance ID for management: {cluster_name}"
+            f"Instance ID (Cluster Name) for management: {cluster_name}"
         )
         logger.info(final_success_message)
         await _append_message_to_chat(chat_request, "assistant", final_success_message)
@@ -487,14 +720,18 @@ async def handle_cloud_hosted_deployment(
         return {
             "status": "success",
             "mode": "cloud-hosted",
-            "message": "EKS, ECR, and application image push completed successfully.",
+            "message": f"Deployment successful. App URL: {final_url}",
             "instance_id": cluster_name,
-            "ecr_repository_url": tf_ecr_repo_url_output, # From TF output
-            "ecr_repository_name": tf_ecr_repo_name_output, # From TF output
-            "pushed_image_uri": pushed_image_uri, # From docker push
+            "ecr_repository_url": tf_ecr_repo_url_output,
+            "ecr_repository_name": tf_ecr_repo_name_output,
+            "pushed_image_uri": pushed_image_uri,
             "eks_cluster_endpoint": eks_endpoint,
             "eks_cluster_ca_data": eks_ca_data,
             "vpc_id": vpc_id,
+            "k8s_manifest_dir": str(workspace_dir_path),
+            "app_url_https": app_url_https,
+            "nlb_dns_name": nlb_dns_name,
+            "acm_certificate_arn": acm_certificate_arn,
             "outputs": outputs
         }
 

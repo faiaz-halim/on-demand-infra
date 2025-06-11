@@ -265,10 +265,14 @@ class TestOrchestrationService(unittest.IsolatedAsyncioTestCase):
     @patch('app.services.orchestration_service.terraform_service.generate_eks_tf_config')
     @patch('app.services.orchestration_service.terraform_service.generate_ecr_tf_config')
     @patch('app.services.orchestration_service.uuid.uuid4')
-    @patch('app.services.orchestration_service.pathlib.Path') # To mock workspace path creation/checks
-    @patch('app.services.orchestration_service.settings') # Mock settings directly used in the function
+    @patch('app.services.orchestration_service.pathlib.Path')
+    @patch('app.services.orchestration_service.settings')
+    @patch('app.services.orchestration_service.manifest_service.generate_deployment_manifest')
+    @patch('app.services.orchestration_service.manifest_service.generate_service_manifest')
+    @patch('app.services.orchestration_service.open', new_callable=unittest.mock.mock_open) # Mock open for writing manifests
     async def test_handle_cloud_hosted_deployment_success(
-        self, mock_settings, mock_pathlib_Path, mock_uuid4,
+        self, mock_builtin_open, mock_generate_service_manifest, mock_generate_deployment_manifest,
+        mock_settings, mock_pathlib_Path, mock_uuid4,
         mock_generate_ecr_tf_config, mock_generate_eks_tf_config,
         mock_run_terraform_init, mock_run_terraform_apply,
         mock_clone_repository, mock_build_docker_image_locally,
@@ -441,8 +445,65 @@ class TestOrchestrationService(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response["ecr_repository_url"], mock_tf_outputs["ecr_repository_url"]["value"])
         self.assertEqual(response["eks_cluster_endpoint"], "test_eks_ep_output")
         self.assertEqual(response["pushed_image_uri"], pushed_ecr_uri)
-        self.assertIn(f"Application image pushed to: {pushed_ecr_uri}", chat_request.messages[-1].content)
-        self.assertIn("EKS, ECR, and application image push completed successfully.", response["message"])
+
+        # Assert manifest generation calls
+        app_name_expected = expected_repo_name_part.lower() # from "repo"
+        # mock_settings.EC2_DEFAULT_APP_PORTS_JSON was set in setUp or test start
+        # Defaulting to 80 if not set or parse error, but test should ensure it's set for predictability.
+        # Assuming settings.EC2_DEFAULT_APP_PORTS_JSON = json.dumps([{"port": 8080, "protocol": "tcp"}])
+        container_port_expected = json.loads(mock_settings.EC2_DEFAULT_APP_PORTS_JSON)[0]['port']
+
+        mock_generate_deployment_manifest.assert_called_once_with(
+            image_name=pushed_ecr_uri,
+            app_name=app_name_expected,
+            replicas=1,
+            ports=[container_port_expected],
+            namespace=self.namespace
+        )
+        mock_generate_service_manifest.assert_called_once_with(
+            app_name=app_name_expected,
+            service_type="ClusterIP",
+            ports_mapping=[{'port': 80, 'targetPort': container_port_expected, 'protocol': 'TCP'}],
+            namespace=self.namespace
+        )
+
+        # Assert manifest file writes
+        # workspace_dir_path is mock_final_workspace_dir_obj in this test
+        # Its __str__ method is mocked to return mock_cluster_dir_string_path
+        # And its __truediv__ is mocked to return specific path objects for deployment/service files
+
+        # Construct expected file paths based on the mocked workspace path string and app name
+        # This relies on mock_final_workspace_dir_obj having its __truediv__ mocked correctly
+        # to produce objects that also have __str__ returning the full path used in open().
+
+        # Re-create the path objects as they would be in the function, using the mocked Path object
+        # workspace_dir_path_obj_for_file_ops = mock_pathlib_Path(mock_cluster_dir_string_path)
+        # This is tricky because mock_pathlib_Path itself is a mock.
+        # The key is that `workspace_dir_path` in the SUT becomes `mock_final_workspace_dir_obj`.
+        # So, `deployment_file_path = workspace_dir_path / f"{app_name}_deployment.yaml"`
+        # becomes `mock_final_workspace_dir_obj / f"{app_name}_deployment.yaml"`
+        # And this was mocked to return `mock_deployment_file_path_obj`
+
+        # String path for deployment file
+        expected_deployment_file_str_path = str(mock_ph_cluster_dir_obj / f"{app_name_expected}_deployment.yaml")
+        expected_service_file_str_path = str(mock_ph_cluster_dir_obj / f"{app_name_expected}_service.yaml")
+
+        # Check that open was called with these string paths
+        calls = [
+            call(expected_deployment_file_str_path, "w"),
+            call(expected_service_file_str_path, "w")
+        ]
+        mock_builtin_open.assert_has_calls(calls, any_order=True)
+
+        # Check content written
+        handle = mock_builtin_open()
+        handle.write.assert_any_call("kind: Deployment...")
+        handle.write.assert_any_call("kind: Service...")
+
+        self.assertIn(f"Application image pushed to: {pushed_ecr_uri}", chat_request.messages[-2].content) # Image push message
+        self.assertIn("Kubernetes manifests for EKS generated and saved", chat_request.messages[-1].content) # Manifest save message
+        self.assertEqual(response["k8s_manifest_dir"], str(mock_ph_cluster_dir_obj)) # Check workspace path in return
+        self.assertIn("EKS, ECR, image push, and K8s manifest generation completed successfully.", response["message"])
 
 
     @patch('app.services.orchestration_service.terraform_service.generate_eks_tf_config')
@@ -573,6 +634,109 @@ class TestOrchestrationService(unittest.IsolatedAsyncioTestCase):
 
         eks_context_arg = mock_generate_eks_tf_config.call_args[0][0]
         self.assertEqual(eks_context_arg["cluster_name"], expected_cluster_name_override)
+
+    @patch('app.services.orchestration_service.shutil.rmtree') # For cleanup
+    @patch('app.services.orchestration_service.tempfile.mkdtemp', return_value="/mock/temp_clone_dir")
+    @patch('app.services.orchestration_service.manifest_service.generate_deployment_manifest', return_value=None) # Simulate failure
+    @patch('app.services.orchestration_service.docker_service.push_image_to_ecr', return_value="pushed_uri_example") # Assume previous steps succeed
+    @patch('app.services.orchestration_service.docker_service.login_to_ecr', return_value=True)
+    @patch('app.services.orchestration_service.docker.from_env')
+    @patch('app.services.orchestration_service.docker_service.get_ecr_login_details', return_value=("user","pass","reg_url"))
+    @patch('app.services.orchestration_service.docker_service.build_docker_image_locally', return_value={"success": True})
+    @patch('app.services.orchestration_service.git_service.clone_repository', return_value={"success": True, "cloned_path": "/mock/clone/repo"})
+    @patch('app.services.orchestration_service.terraform_service.run_terraform_apply')
+    @patch('app.services.orchestration_service.terraform_service.run_terraform_init', return_value=(True, "", ""))
+    @patch('app.services.orchestration_service.terraform_service.generate_eks_tf_config', return_value="path/to/eks.tf")
+    @patch('app.services.orchestration_service.terraform_service.generate_ecr_tf_config', return_value="path/to/ecr.tf")
+    @patch('app.services.orchestration_service.settings')
+    async def test_handle_cloud_hosted_deployment_eks_manifest_gen_fails(
+        self, mock_settings, mock_gen_ecr, mock_gen_eks_tf, mock_tf_init, mock_tf_apply,
+        mock_clone_repo, mock_build_image, mock_get_login, mock_docker_env, mock_login_ecr, mock_push,
+        mock_gen_deploy, mock_mkdtemp, mock_rmtree):
+
+        mock_settings.PERSISTENT_WORKSPACE_BASE_DIR = self.test_persistent_workspaces
+        mock_settings.EC2_DEFAULT_APP_PORTS_JSON = json.dumps([{"port": 8080}]) # Ensure it's parsable
+
+        # Simulate successful Terraform apply with necessary outputs for ECR push
+        mock_tf_outputs = {
+            "ecr_repository_url": {"value": "test_ecr_url_output"},
+            "ecr_repository_name": {"value": "mcp-app-test-repo-testuuid"},
+        }
+        mock_tf_apply.return_value = (True, mock_tf_outputs, "apply_stdout", "")
+
+        chat_request = ChatCompletionRequest(messages=[ChatMessage(role="user", content="deploy")])
+
+        with patch('app.services.orchestration_service.pathlib.Path') as mock_path_finally:
+            mock_clone_path_obj = MagicMock();
+            mock_clone_path_obj.exists.return_value = True # For cleanup check
+            # Simulate Path(tempfile.mkdtemp()) behavior for the cleanup logic
+            def path_side_effect_for_cleanup(arg_path):
+                if str(arg_path) == "/mock/temp_clone_dir":
+                    return mock_clone_path_obj
+                return MagicMock() # Default for other Path calls
+            mock_path_finally.side_effect = path_side_effect_for_cleanup
+
+            response = await handle_cloud_hosted_deployment(self.repo_url, self.namespace, self.aws_creds, chat_request)
+
+        self.assertEqual(response["status"], "error")
+        self.assertIn("Failed to generate Kubernetes manifests for EKS", response["message"])
+        self.assertIn("Failed to generate Kubernetes manifests for EKS", chat_request.messages[-1].content)
+        mock_rmtree.assert_called_once_with(str(mock_clone_path_obj))
+
+
+    @patch('app.services.orchestration_service.shutil.rmtree')
+    @patch('app.services.orchestration_service.tempfile.mkdtemp', return_value="/mock/temp_clone_dir")
+    @patch('app.services.orchestration_service.open', new_callable=unittest.mock.mock_open) # Mock open
+    @patch('app.services.orchestration_service.manifest_service.generate_service_manifest', return_value="kind: Service...") # Success
+    @patch('app.services.orchestration_service.manifest_service.generate_deployment_manifest', return_value="kind: Deployment...") # Success
+    @patch('app.services.orchestration_service.docker_service.push_image_to_ecr', return_value="pushed_uri_example")
+    @patch('app.services.orchestration_service.docker_service.login_to_ecr', return_value=True)
+    @patch('app.services.orchestration_service.docker.from_env')
+    @patch('app.services.orchestration_service.docker_service.get_ecr_login_details', return_value=("user","pass","reg_url"))
+    @patch('app.services.orchestration_service.docker_service.build_docker_image_locally', return_value={"success": True})
+    @patch('app.services.orchestration_service.git_service.clone_repository', return_value={"success": True, "cloned_path": "/mock/clone/repo"})
+    @patch('app.services.orchestration_service.terraform_service.run_terraform_apply')
+    @patch('app.services.orchestration_service.terraform_service.run_terraform_init', return_value=(True, "", ""))
+    @patch('app.services.orchestration_service.terraform_service.generate_eks_tf_config', return_value="path/to/eks.tf")
+    @patch('app.services.orchestration_service.terraform_service.generate_ecr_tf_config', return_value="path/to/ecr.tf")
+    @patch('app.services.orchestration_service.settings')
+    async def test_handle_cloud_hosted_deployment_eks_manifest_save_fails(
+        self, mock_settings, mock_gen_ecr_tf, mock_gen_eks_tf, mock_tf_init, mock_tf_apply,
+        mock_clone_repo, mock_build_image, mock_get_login, mock_docker_env, mock_login_ecr, mock_push,
+        mock_gen_deploy, mock_gen_service, mock_builtin_open, mock_mkdtemp, mock_rmtree):
+
+        mock_settings.PERSISTENT_WORKSPACE_BASE_DIR = self.test_persistent_workspaces
+        mock_settings.EC2_DEFAULT_APP_PORTS_JSON = json.dumps([{"port": 8080}])
+
+        mock_tf_outputs = {
+            "ecr_repository_url": {"value": "test_ecr_url_output"},
+            "ecr_repository_name": {"value": "mcp-app-test-repo-testuuid"},
+        }
+        mock_tf_apply.return_value = (True, mock_tf_outputs, "apply_stdout", "")
+
+        # Simulate IOError during file write
+        mock_builtin_open.side_effect = IOError("Disk full simulation")
+
+        chat_request = ChatCompletionRequest(messages=[ChatMessage(role="user", content="deploy")])
+
+        with patch('app.services.orchestration_service.pathlib.Path') as mock_path_finally:
+            mock_clone_path_obj = MagicMock();
+            mock_clone_path_obj.exists.return_value = True
+            def path_side_effect_save_fail(arg_path):
+                if str(arg_path) == "/mock/temp_clone_dir": return mock_clone_path_obj
+                # For persistent workspace path, make it return a mock that can be used in `open`
+                mock_ws_path = MagicMock(spec=pathlib.Path)
+                mock_ws_path.__str__.return_value = str(arg_path)
+                mock_ws_path.__truediv__.side_effect = lambda p: pathlib.Path(str(mock_ws_path), p)
+                return mock_ws_path
+            mock_path_finally.side_effect = path_side_effect_save_fail
+
+            response = await handle_cloud_hosted_deployment(self.repo_url, self.namespace, self.aws_creds, chat_request)
+
+        self.assertEqual(response["status"], "error")
+        self.assertIn("Failed to save K8s manifests for EKS: Disk full simulation", response["message"])
+        self.assertIn("Failed to save K8s manifests for EKS: Disk full simulation", chat_request.messages[-1].content)
+        mock_rmtree.assert_called_once_with(str(mock_clone_path_obj))
 
 
     @patch('app.services.orchestration_service.shutil.rmtree')

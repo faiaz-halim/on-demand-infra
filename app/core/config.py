@@ -64,6 +64,26 @@ class Settings(BaseSettings):
     ECR_DEFAULT_SCAN_ON_PUSH: bool = True
     ECR_DEFAULT_REPO_NAME_PREFIX: str = "mcp-app"
 
+    # EKS Kubeconfig settings
+    EKS_DEFAULT_USER_ARN: Optional[str] = None
+
+    # Nginx Ingress Controller Helm chart settings
+    NGINX_HELM_CHART_VERSION: str = "4.10.0"
+
+    # Kubernetes Ingress Defaults
+    INGRESS_DEFAULT_SSL_REDIRECT: bool = True
+    INGRESS_DEFAULT_HTTP_PATH: str = "/"
+    INGRESS_DEFAULT_PATH_TYPE: str = "Prefix"
+    DEFAULT_DOMAIN_NAME_FOR_APPS: Optional[str] = None # e.g. "mcpapps.example.com"
+
+    # Nginx specific settings for service lookup
+    NGINX_INGRESS_NAMESPACE: str = "ingress-nginx"
+    NGINX_INGRESS_SERVICE_NAME: str = "ingress-nginx-controller"
+    LOAD_BALANCER_DETAILS_TIMEOUT_SECONDS: int = 300
+
+    # Terraform file naming
+    ROUTE53_ACM_TF_FILENAME: str = "domain_infra.tf"
+
     # Persistent workspace for Terraform states, etc.
     PERSISTENT_WORKSPACE_BASE_DIR: str = "/app/mcp_workspaces"
 

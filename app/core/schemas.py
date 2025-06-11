@@ -58,6 +58,18 @@ class ChatCompletionRequest(BaseModel):
     public_ip: Optional[str] = Field(default=None, description="Public IP of the EC2 instance to manage (e.g. for redeploy, scale actions on an existing cloud-local instance).")
     # instance_size: Optional[str] = Field(default=None, description="EC2 instance size for cloud-local mode. Overrides server default.")
 
+    # Cloud-Hosted EKS specific DNS/SSL parameters
+    base_hosted_zone_id: Optional[str] = Field(
+        default=None,
+        title="Route53 Base Hosted Zone ID",
+        description="The Route53 Hosted Zone ID for the base domain under which the app's subdomain will be created (e.g., Z0123456789ABCDEFGHIJ for 'example.com'). Required if custom domain/SSL is desired for cloud-hosted EKS deployments."
+    )
+    app_subdomain_label: Optional[str] = Field(
+        default=None,
+        title="Application Subdomain Label",
+        description="The label for the application's subdomain (e.g., 'myapp'). If provided, the full app domain will be 'myapp.your_base_domain.com'. If not provided, a name might be derived from the repository name. Used for cloud-hosted EKS deployments with custom domain/SSL."
+    )
+
     # Application configuration (example, can be expanded)
     # application_environment_variables: Optional[Dict[str, str]] = Field(default_factory=dict, description="Environment variables for the application.")
 
