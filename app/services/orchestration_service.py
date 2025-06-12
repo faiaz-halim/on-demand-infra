@@ -771,3 +771,207 @@ async def handle_cloud_local_scale(
     await _append_message_to_chat(chat_request, "assistant", message_content)
 
     return {"status": "pending_implementation", "mode": "cloud-local", "action": "scale", "instance_id": instance_id, "message": message_content}
+
+
+async def handle_cloud_hosted_decommission(
+    cluster_name: str,
+    aws_creds: AWSCredentials,
+    chat_request: ChatCompletionRequest
+) -> Dict[str, Any]:
+    workspace_dir_path = pathlib.Path(settings.PERSISTENT_WORKSPACE_BASE_DIR) / "cloud-hosted" / cluster_name
+
+    logger.info(f"Initiating decommission for cloud-hosted EKS cluster '{cluster_name}' in workspace: {workspace_dir_path}")
+    await _append_message_to_chat(chat_request, "assistant", f"Starting decommission process for EKS cluster: {cluster_name}...")
+
+    if not workspace_dir_path.exists() or not workspace_dir_path.is_dir():
+        err_msg = f"Workspace for EKS cluster '{cluster_name}' not found at {workspace_dir_path}. Cannot decommission."
+        logger.error(err_msg)
+        await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+        return {"status": "error", "mode": "cloud-hosted", "action": "decommission", "instance_id": cluster_name, "message": "Workspace not found for decommission."}
+
+    aws_env_vars: Optional[Dict[str, str]] = None
+    if aws_creds:
+        aws_env_vars = {
+            "AWS_ACCESS_KEY_ID": aws_creds.aws_access_key_id.get_secret_value(),
+            "AWS_SECRET_ACCESS_KEY": aws_creds.aws_secret_access_key.get_secret_value(),
+            "AWS_DEFAULT_REGION": aws_creds.aws_region,
+        }
+        logger.info(f"AWS environment variables prepared for EKS decommission. Region: {aws_creds.aws_region}.")
+    else:
+        # This should ideally be caught by the router if credentials are required
+        err_msg = "AWS credentials are required for cloud-hosted decommission but were not provided."
+        logger.error(err_msg)
+        await _append_message_to_chat(chat_request, "assistant", f"Configuration Error: {err_msg}")
+        return {"status": "error", "mode": "cloud-hosted", "action": "decommission", "instance_id": cluster_name, "message": err_msg}
+
+    await _append_message_to_chat(chat_request, "assistant", "Initializing Terraform for the EKS workspace...")
+    init_ok, init_out, init_err = await asyncio.to_thread(
+        terraform_service.run_terraform_init, str(workspace_dir_path), aws_env_vars
+    )
+    logger.info(f"Terraform init stdout for EKS decommission of '{cluster_name}':\n{init_out}")
+    if init_err: logger.error(f"Terraform init stderr for EKS decommission of '{cluster_name}':\n{init_err}")
+
+    if not init_ok:
+        err_msg = f"Error during Terraform init for EKS workspace: {init_err or init_out}"
+        await _append_message_to_chat(chat_request, "assistant", err_msg)
+        return {"status": "error", "mode": "cloud-hosted", "action": "decommission", "instance_id": cluster_name, "message": f"Terraform init failed: {init_err or init_out}"}
+
+    await _append_message_to_chat(chat_request, "assistant", f"Executing Terraform destroy for EKS cluster {cluster_name}. This may take a significant amount of time (15-25 minutes)...")
+    destroy_ok, destroy_out, destroy_err = await asyncio.to_thread(
+        terraform_service.run_terraform_destroy, str(workspace_dir_path), aws_env_vars
+    )
+    logger.info(f"Terraform destroy stdout for EKS '{cluster_name}':\n{destroy_out}")
+    if destroy_err: logger.error(f"Terraform destroy stderr for EKS '{cluster_name}':\n{destroy_err}")
+
+    if destroy_ok:
+        await _append_message_to_chat(chat_request, "assistant", f"Terraform destroy successful for EKS cluster {cluster_name}.")
+        try:
+            await asyncio.to_thread(shutil.rmtree, str(workspace_dir_path))
+            logger.info(f"Successfully cleaned up workspace: {workspace_dir_path}")
+            final_msg = f"EKS cluster {cluster_name} decommissioned and workspace cleaned."
+            await _append_message_to_chat(chat_request, "assistant", final_msg)
+            return {"status": "success", "mode": "cloud-hosted", "action": "decommission", "instance_id": cluster_name, "message": final_msg}
+        except OSError as e:
+            err_msg_cleanup = f"EKS cluster {cluster_name} decommissioned, but failed to clean up persistent workspace: {str(e)}"
+            logger.error(f"Failed to clean up workspace {workspace_dir_path}: {e}")
+            await _append_message_to_chat(chat_request, "assistant", err_msg_cleanup)
+            return {"status": "success_with_cleanup_error", "mode": "cloud-hosted", "action": "decommission", "instance_id": cluster_name, "message": err_msg_cleanup}
+    else:
+        err_msg = f"Error: Terraform destroy failed for EKS cluster {cluster_name}. Details: {destroy_err or destroy_out}"
+        await _append_message_to_chat(chat_request, "assistant", err_msg)
+        return {"status": "error", "mode": "cloud-hosted", "action": "decommission", "instance_id": cluster_name, "message": f"Terraform destroy failed: {destroy_err or destroy_out}"}
+
+
+async def handle_cloud_hosted_redeploy(
+    cluster_name: str,
+    repo_url: str,
+    namespace: str,
+    aws_creds: AWSCredentials,
+    chat_request: ChatCompletionRequest
+) -> Dict[str, Any]:
+    logger.info(f"Handling cloud-hosted redeploy for EKS cluster '{cluster_name}', repo '{repo_url}', namespace '{namespace}'.")
+    await _append_message_to_chat(chat_request, "assistant", f"Starting redeploy process for application in EKS cluster '{cluster_name}' using repository '{repo_url}'...")
+
+    workspace_dir_path = pathlib.Path(settings.PERSISTENT_WORKSPACE_BASE_DIR) / "cloud-hosted" / cluster_name
+    kubeconfig_file_path = workspace_dir_path / f"kubeconfig_{cluster_name}.yaml"
+
+    if not kubeconfig_file_path.exists():
+        err_msg = f"Kubeconfig for EKS cluster '{cluster_name}' not found at {kubeconfig_file_path}. Cannot redeploy."
+        logger.error(err_msg)
+        await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+        return {"status": "error", "mode": "cloud-hosted", "action": "redeploy", "instance_id": cluster_name, "message": "Kubeconfig not found."}
+
+    repo_name_from_url = repo_url.split('/')[-1].replace('.git', '')
+    app_name = repo_name_from_url.lower().replace('_','-') # Consistent app name
+
+    # Derive unique_id_part from cluster_name
+    cluster_name_parts = cluster_name.split('-')
+    unique_id_part = ""
+    if len(cluster_name_parts) > 3 and cluster_name_parts[0] == 'mcp' and cluster_name_parts[1] == 'eks':
+        unique_id_part = cluster_name_parts[-1]
+        # Potentially validate derived repo part against repo_name_from_url if strictness is needed
+        derived_repo_part_from_cluster = "-".join(cluster_name_parts[2:-1])
+        if derived_repo_part_from_cluster != repo_name_from_url.replace('_', '-'): # Ensure consistency
+             logger.warning(f"App name part derived from cluster_name ('{derived_repo_part_from_cluster}') does not match current repo_name_from_url ('{repo_name_from_url}'). This might indicate issues if the ECR repo was named using a different base.")
+             # For now, we will proceed with the unique_id_part derived, but this could be a point of failure if the ECR repo naming is inconsistent.
+    else:
+        logger.warning(f"Could not reliably derive unique_id_part from cluster_name {cluster_name} for ECR naming. Attempting to use a generic ECR name. This might fail if the ECR repository was not named this way during initial deployment.")
+        # Fallback: if unique_id_part is essential and cannot be derived, this is an issue.
+        # For this implementation, we construct the ECR name based on the current app_name and the derived unique_id_part.
+        # If unique_id_part is empty, the ECR name might not be unique or match the one created.
+
+    # Construct ECR repo name - this MUST match the name used during initial deployment.
+    # The initial deployment uses: ecr_repo_name = f"{settings.ECR_DEFAULT_REPO_NAME_PREFIX}-{repo_name_from_url_original}-{unique_id_part_original}"
+    # We assume repo_name_from_url for redeploy IS the same as original for ECR naming.
+    ecr_repo_name_for_redeploy = f"{settings.ECR_DEFAULT_REPO_NAME_PREFIX}-{app_name}-{unique_id_part}" if unique_id_part else f"{settings.ECR_DEFAULT_REPO_NAME_PREFIX}-{app_name}"
+    logger.info(f"Using ECR repository name for redeploy: {ecr_repo_name_for_redeploy}")
+
+    clone_workspace_path = pathlib.Path(tempfile.mkdtemp(prefix="mcp_redeploy_clone_"))
+    pushed_image_uri_redeploy = None
+    try:
+        await _append_message_to_chat(chat_request, "assistant", f"Cloning repository {repo_url} locally...")
+        cloned_repo_details = await asyncio.to_thread(git_service.clone_repository, repo_url, str(clone_workspace_path))
+        if not cloned_repo_details or not cloned_repo_details.get("success"):
+            raise Exception(f"Git clone failed: {cloned_repo_details.get('error', 'Unknown error')}")
+
+        actual_cloned_path = clone_workspace_path / repo_name_from_url
+        if not actual_cloned_path.exists() or not actual_cloned_path.is_dir():
+            actual_cloned_path = clone_workspace_path # If cloned directly into the temp dir
+            if not actual_cloned_path.exists() or not actual_cloned_path.is_dir():
+                 raise Exception(f"Cloned repository directory not found at expected path: {clone_workspace_path / repo_name_from_url} or {clone_workspace_path}")
+        logger.info(f"Repository cloned to {actual_cloned_path}")
+
+        new_image_version_tag = str(int(time.time()))
+        local_image_tag = f"{app_name}-mcp:{new_image_version_tag}"
+        await _append_message_to_chat(chat_request, "assistant", f"Building Docker image {local_image_tag} locally...")
+        build_result = await asyncio.to_thread(docker_service.build_docker_image_locally, actual_cloned_path, local_image_tag)
+        if not build_result.get("success"):
+            raise Exception(f"Docker build failed: {build_result.get('error', 'Unknown error')} Logs: {build_result.get('logs', 'No logs available.')}")
+
+        await _append_message_to_chat(chat_request, "assistant", "Authenticating with AWS ECR...")
+        login_details = await asyncio.to_thread(docker_service.get_ecr_login_details, aws_creds.aws_region, aws_creds.aws_access_key_id.get_secret_value(), aws_creds.aws_secret_access_key.get_secret_value())
+        if not login_details:
+            raise Exception("Failed to get ECR login credentials.")
+
+        ecr_username, ecr_password, ecr_registry_from_token = login_details
+        docker_client = docker.from_env()
+        login_ok = await asyncio.to_thread(docker_service.login_to_ecr, docker_client, ecr_registry_from_token, ecr_username, ecr_password)
+        if not login_ok:
+            raise Exception("ECR login failed.")
+
+        await _append_message_to_chat(chat_request, "assistant", f"Pushing image {local_image_tag} to ECR repository {ecr_repo_name_for_redeploy}...")
+        pushed_image_uri_redeploy = await asyncio.to_thread(docker_service.push_image_to_ecr, docker_client, local_image_tag, ecr_repo_name_for_redeploy, ecr_registry_from_token, image_version_tag=new_image_version_tag)
+        if not pushed_image_uri_redeploy:
+            raise Exception("Failed to push image to ECR.")
+        await _append_message_to_chat(chat_request, "assistant", f"New image pushed to ECR: {pushed_image_uri_redeploy}")
+
+    except Exception as e:
+        logger.error(f"Error during image build/push for redeploy of cluster '{cluster_name}': {e}", exc_info=True)
+        await _append_message_to_chat(chat_request, "assistant", f"Error during image build/push: {str(e)}")
+        return {"status": "error", "mode": "cloud-hosted", "action": "redeploy", "instance_id": cluster_name, "message": str(e)}
+    finally:
+        if clone_workspace_path.exists():
+            try:
+                await asyncio.to_thread(shutil.rmtree, str(clone_workspace_path))
+                logger.info(f"Cleaned up temporary clone workspace: {clone_workspace_path}")
+            except Exception as e_clean:
+                logger.error(f"Failed to cleanup temporary clone workspace {clone_workspace_path} for redeploy: {e_clean}", exc_info=True)
+
+    if not pushed_image_uri_redeploy:
+        err_msg = "Image push failed, cannot proceed with kubectl update."
+        logger.error(err_msg) # Should have been caught by the exception block already
+        await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+        return {"status": "error", "mode": "cloud-hosted", "action": "redeploy", "instance_id": cluster_name, "message": err_msg}
+
+    # Update K8s Deployment
+    container_name = app_name  # Assuming container name in deployment spec matches app_name
+    # Using `kubectl set image` for simplicity. A more robust approach might involve patching the deployment manifest and reapplying.
+    kubectl_set_image_cmd = ["set", "image", f"deployment/{app_name}", f"{container_name}={pushed_image_uri_redeploy}", "--namespace", namespace]
+
+    await _append_message_to_chat(chat_request, "assistant", f"Updating Kubernetes deployment '{app_name}' in namespace '{namespace}' with new image '{pushed_image_uri_redeploy}'...")
+
+    set_image_result = await asyncio.to_thread(k8s_service._run_kubectl_command, kubectl_set_image_cmd, str(kubeconfig_file_path))
+
+    logger.info(f"Kubectl set image stdout for '{app_name}':\n{set_image_result.stdout}")
+    if set_image_result.stderr:
+        logger.error(f"Kubectl set image stderr for '{app_name}':\n{set_image_result.stderr}")
+
+    if set_image_result.returncode != 0:
+        error_detail = set_image_result.stderr or set_image_result.stdout or "Unknown error from kubectl set image."
+        err_msg = f"Error updating Kubernetes deployment: {error_detail}"
+        logger.error(f"kubectl set image failed for {app_name}: {error_detail}")
+        await _append_message_to_chat(chat_request, "assistant", err_msg)
+        return {"status": "error", "mode": "cloud-hosted", "action": "redeploy", "instance_id": cluster_name, "message": f"kubectl set image failed: {error_detail}"}
+
+    final_success_message = f"Application '{app_name}' in EKS cluster '{cluster_name}' successfully redeployed with image '{pushed_image_uri_redeploy}'. It may take a few moments for the changes to roll out."
+    await _append_message_to_chat(chat_request, "assistant", final_success_message)
+
+    return {
+        "status": "success",
+        "mode": "cloud-hosted",
+        "action": "redeploy",
+        "instance_id": cluster_name,
+        "repo_url": repo_url,
+        "redeployed_image_uri": pushed_image_uri_redeploy,
+        "message": "Redeployment complete."
+    }

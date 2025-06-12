@@ -15,11 +15,13 @@ from app.services.orchestration_service import (
     handle_local_deployment,
     handle_cloud_local_deployment,
     handle_cloud_hosted_deployment,
-    handle_cloud_local_decommission, # Already imported
-    handle_cloud_local_redeploy   # Added import
+    handle_cloud_local_decommission,
+    handle_cloud_hosted_decommission, # Added import
+    handle_cloud_local_redeploy
 )
 from app.main import app
 from app.core.config import settings as app_settings
+from fastapi.testclient import TestClient # Added import
 
 from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall, Function
 
@@ -219,6 +221,55 @@ class TestChatRouter(unittest.TestCase):
         self.assertEqual(response.json()["choices"][0]["message"]["content"], "Azure says hello")
         mock_handle_local.assert_not_called()
         mock_azure_client.chat.completions.create.assert_called_once()
+
+    # --- New Decommission Cloud-Hosted Tests ---
+    @patch('app.routers.chat.handle_cloud_hosted_decommission', new_callable=AsyncMock)
+    def test_decommission_action_cloud_hosted_success(self, mock_handle_ch_decommission):
+        mock_response_data = {"status": "cloud_hosted_decommission_success", "instance_id": "my-eks-cluster"}
+        mock_handle_ch_decommission.return_value = mock_response_data
+        aws_creds_payload = {"aws_access_key_id": "key_ch", "aws_secret_access_key": "secret_ch", "aws_region": "eu-central-1"}
+        payload = {
+            **self.base_payload,
+            "action": "decommission",
+            "deployment_mode": "cloud-hosted",
+            "instance_id": "my-eks-cluster",
+            "aws_credentials": aws_creds_payload
+        }
+
+        response = self.client.post("/v1/chat/completions", json=payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), mock_response_data)
+        mock_handle_ch_decommission.assert_called_once()
+        # Check specific args passed to the handler
+        call_args = mock_handle_ch_decommission.call_args[0]
+        self.assertEqual(call_args[0], "my-eks-cluster") # cluster_name
+        self.assertIsInstance(call_args[1], AWSCredentials) # aws_creds
+        self.assertIsInstance(call_args[2], ChatCompletionRequest) # chat_request
+
+    def test_decommission_action_cloud_hosted_missing_instance_id(self):
+        aws_creds_payload = {"aws_access_key_id": "key_ch", "aws_secret_access_key": "secret_ch", "aws_region": "eu-central-1"}
+        payload = {
+            **self.base_payload,
+            "action": "decommission",
+            "deployment_mode": "cloud-hosted",
+            # "instance_id": "my-eks-cluster", # Missing
+            "aws_credentials": aws_creds_payload
+        }
+        response = self.client.post("/v1/chat/completions", json=payload)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Instance ID ('instance_id') is required for 'decommission' action.", response.json()["detail"])
+
+    def test_decommission_action_cloud_hosted_missing_aws_creds(self):
+        payload = {
+            **self.base_payload,
+            "action": "decommission",
+            "deployment_mode": "cloud-hosted",
+            "instance_id": "my-eks-cluster"
+            # "aws_credentials": aws_creds_payload # Missing
+        }
+        response = self.client.post("/v1/chat/completions", json=payload)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("AWS credentials are required for cloud-hosted decommission action.", response.json()["detail"])
 
 
 if __name__ == '__main__':

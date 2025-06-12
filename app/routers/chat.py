@@ -22,7 +22,9 @@ from app.services.orchestration_service import (
     handle_cloud_hosted_deployment,
     handle_cloud_local_decommission,
     handle_cloud_local_redeploy,
-    handle_cloud_local_scale # Added import
+    handle_cloud_local_scale,
+    handle_cloud_hosted_decommission,
+    handle_cloud_hosted_redeploy # Added for cloud-hosted redeploy
 )
 from app.services.tool_service import TOOL_DEFINITIONS, execute_tool
 
@@ -95,8 +97,17 @@ async def create_chat_completion(request: ChatCompletionRequest = Body(...)) -> 
                 if not request.aws_credentials:
                     raise HTTPException(status_code=400, detail="AWS credentials ('aws_credentials') are required for 'decommission' action in cloud-local mode.")
                 response_data = await handle_cloud_local_decommission(request.instance_id, request.aws_credentials, request)
+            elif request.deployment_mode == "cloud-hosted":
+                if not request.aws_credentials:
+                    raise HTTPException(status_code=400, detail="AWS credentials are required for cloud-hosted decommission action.")
+                logger.info(f"Cloud-hosted decommission requested for EKS cluster (instance_id): {request.instance_id}")
+                response_data = await handle_cloud_hosted_decommission(
+                    cluster_name=request.instance_id, # instance_id is the cluster_name for cloud-hosted
+                    aws_creds=request.aws_credentials,
+                    chat_request=request
+                )
             else:
-                raise HTTPException(status_code=501, detail=f"Decommission for mode '{request.deployment_mode}' not yet implemented or instance_id context is insufficient.")
+                raise HTTPException(status_code=400, detail=f"Decommission not supported for deployment mode: {request.deployment_mode} with instance_id")
             return JSONResponse(content=response_data)
         except HTTPException as http_exc:
             raise http_exc
@@ -133,10 +144,37 @@ async def create_chat_completion(request: ChatCompletionRequest = Body(...)) -> 
             except HTTPException as http_exc:
                 raise http_exc
             except Exception as e:
-                logger.error(f"Error during 'redeploy' action for Request ID {request_id}, Instance ID {request.instance_id}: {str(e)}", exc_info=True)
-                raise HTTPException(status_code=500, detail=f"Error during 'redeploy' action: {str(e)}")
+                logger.error(f"Error during 'redeploy' (cloud-local) for Request ID {request_id}, Instance ID {request.instance_id}: {str(e)}", exc_info=True)
+                raise HTTPException(status_code=500, detail=f"Error during 'redeploy' (cloud-local) action: {str(e)}")
+        elif request.deployment_mode == "cloud-hosted":
+            if not request.instance_id: # This is the cluster_name
+                raise HTTPException(status_code=400, detail="Instance ID (EKS cluster name) is required for cloud-hosted redeploy.")
+            if not request.github_repo_url:
+                raise HTTPException(status_code=400, detail="GitHub repository URL is required for redeploy.")
+            if not request.target_namespace: # Assuming namespace is always needed
+                raise HTTPException(status_code=400, detail="Target namespace is required for redeploy.")
+            if not request.aws_credentials:
+                raise HTTPException(status_code=400, detail="AWS credentials are required for cloud-hosted redeploy.")
+
+            logger.info(f"Cloud-hosted redeploy requested for EKS cluster: {request.instance_id}, repo: {request.github_repo_url}")
+            response_data: Dict[str, Any] = {}
+            try:
+                response_data = await handle_cloud_hosted_redeploy(
+                    cluster_name=request.instance_id,
+                    repo_url=request.github_repo_url,
+                    namespace=request.target_namespace,
+                    aws_creds=request.aws_credentials,
+                    chat_request=request
+                )
+                return JSONResponse(content=response_data)
+            except HTTPException as http_exc:
+                raise http_exc
+            except Exception as e:
+                logger.error(f"Error during 'redeploy' (cloud-hosted) for Request ID {request_id}, Cluster {request.instance_id}: {str(e)}", exc_info=True)
+                raise HTTPException(status_code=500, detail=f"Error during 'redeploy' (cloud-hosted) action: {str(e)}")
         else:
-            raise HTTPException(status_code=501, detail=f"Redeploy action for mode '{request.deployment_mode}' is not yet implemented.")
+            # Fallback for other deployment modes under redeploy
+            raise HTTPException(status_code=501, detail=f"Redeploy not implemented for {request.deployment_mode}")
 
     elif request.action == "scale":
         if request.deployment_mode == "cloud-local":
