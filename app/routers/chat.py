@@ -24,7 +24,8 @@ from app.services.orchestration_service import (
     handle_cloud_local_redeploy,
     handle_cloud_local_scale,
     handle_cloud_hosted_decommission,
-    handle_cloud_hosted_redeploy # Added for cloud-hosted redeploy
+    handle_cloud_hosted_redeploy, # Added for cloud-hosted redeploy
+    handle_cloud_hosted_scale
 )
 from app.services.tool_service import TOOL_DEFINITIONS, execute_tool
 
@@ -208,6 +209,37 @@ async def create_chat_completion(request: ChatCompletionRequest = Body(...)) -> 
             except Exception as e:
                 logger.error(f"Error during 'scale' action for Request ID {request_id}, Instance ID {request.instance_id}: {str(e)}", exc_info=True)
                 raise HTTPException(status_code=500, detail=f"Error during 'scale' action: {str(e)}")
+        elif request.deployment_mode == "cloud-hosted":
+            if not request.instance_id: # EKS cluster name
+                raise HTTPException(status_code=400, detail="Instance ID (EKS cluster name) is required for 'scale' action in cloud-hosted mode.")
+            if not request.target_namespace:
+                raise HTTPException(status_code=400, detail="Target Kubernetes namespace ('target_namespace') is required for 'scale' action in cloud-hosted mode.")
+            if request.scale_replicas is None or not isinstance(request.scale_replicas, int) or request.scale_replicas < 0:
+                raise HTTPException(status_code=400, detail="A valid, non-negative integer for 'scale_replicas' is required for 'scale' action.")
+            if not request.aws_credentials:
+                raise HTTPException(status_code=400, detail="AWS credentials ('aws_credentials') are required for 'scale' action in cloud-hosted mode.")
+            # instance_name might be used to identify the K8s deployment name
+            if not request.instance_name:
+                 logger.warning("Request 'instance_name' (expected to be K8s deployment name) not provided for cloud-hosted scale. The handler will attempt to derive it or use a default if possible.")
+
+
+            logger.info(f"Cloud-hosted scale action requested for EKS cluster: {request.instance_id}, K8s Deployment: {request.instance_name or 'Not specified'}, Namespace: {request.target_namespace}, Replicas: {request.scale_replicas}")
+            response_data: Dict[str, Any] = {}
+            try:
+                response_data = await handle_cloud_hosted_scale(
+                    cluster_name=request.instance_id,
+                    deployment_name_to_scale=request.instance_name, # This might be None
+                    namespace=request.target_namespace,
+                    replicas=request.scale_replicas,
+                    aws_creds=request.aws_credentials,
+                    chat_request=request
+                )
+                return JSONResponse(content=response_data)
+            except HTTPException as http_exc:
+                raise http_exc
+            except Exception as e:
+                logger.error(f"Error during 'scale' (cloud-hosted) for Request ID {request_id}, Cluster {request.instance_id}: {str(e)}", exc_info=True)
+                raise HTTPException(status_code=500, detail=f"Error during 'scale' (cloud-hosted) action: {str(e)}")
         else:
             raise HTTPException(status_code=501, detail=f"Scale action for mode '{request.deployment_mode}' is not yet implemented.")
 

@@ -1211,3 +1211,77 @@ async def handle_cloud_hosted_redeploy(
         "redeployed_image_uri": pushed_image_uri_redeploy,
         "message": "Redeployment complete."
     }
+
+
+async def handle_cloud_hosted_scale(
+    cluster_name: str,
+    deployment_name_to_scale: Optional[str], # From chat_request.instance_name
+    namespace: str,
+    replicas: int,
+    aws_creds: AWSCredentials, # Not directly used for kubectl, but good for consistency / future auth needs
+    chat_request: ChatCompletionRequest
+) -> Dict[str, Any]:
+    logger.info(f"Cloud-hosted scale: EKS Cluster '{cluster_name}', K8s Deployment '{deployment_name_to_scale or 'Not specified - will fail if None'}' in Namespace '{namespace}' to {replicas} replicas.")
+    await _append_message_to_chat(chat_request, "assistant", f"Initiating scaling for deployment '{deployment_name_to_scale or '[Unknown Deployment]'}' in EKS cluster '{cluster_name}', namespace '{namespace}' to {replicas} replicas.")
+
+    try:
+        if not deployment_name_to_scale:
+            err_msg = "Deployment name (expected via 'instance_name' in request) was not provided. Cannot determine which deployment to scale."
+            logger.error(err_msg)
+            await _append_message_to_chat(chat_request, "assistant", f"Configuration Error: {err_msg}")
+            return {"status": "error", "message": err_msg, "instance_id": cluster_name}
+
+        workspace_dir_path = pathlib.Path(settings.PERSISTENT_WORKSPACE_BASE_DIR) / "cloud-hosted" / cluster_name
+        kubeconfig_file_path = workspace_dir_path / f"kubeconfig_{cluster_name}.yaml"
+
+        if not kubeconfig_file_path.exists():
+            err_msg = f"Kubeconfig for EKS cluster '{cluster_name}' not found at {kubeconfig_file_path}. Cannot scale."
+            logger.error(err_msg)
+            await _append_message_to_chat(chat_request, "assistant", f"Configuration Error: {err_msg}")
+            return {"status": "error", "message": err_msg, "instance_id": cluster_name}
+
+        await _append_message_to_chat(chat_request, "assistant", f"Scaling deployment '{deployment_name_to_scale}' to {replicas} replicas...")
+
+        scale_command_list = [
+            "scale", "deployment", deployment_name_to_scale,
+            f"--replicas={replicas}",
+            "--namespace", namespace
+        ]
+
+        scale_result = await asyncio.to_thread(
+            k8s_service._run_kubectl_command,
+            command_args=scale_command_list,
+            kubeconfig_path=str(kubeconfig_file_path)
+        )
+
+        logger.info(f"Kubectl scale stdout for '{deployment_name_to_scale}':\n{scale_result.stdout}")
+        if scale_result.stderr:
+            logger.error(f"Kubectl scale stderr for '{deployment_name_to_scale}':\n{scale_result.stderr}")
+
+        if scale_result.returncode == 0:
+            success_message = f"Deployment '{deployment_name_to_scale}' in namespace '{namespace}' (EKS cluster '{cluster_name}') successfully scaled to {replicas} replicas."
+            logger.info(success_message)
+            await _append_message_to_chat(chat_request, "assistant", success_message)
+            return {
+                "status": "success",
+                "message": success_message,
+                "instance_id": cluster_name, # This is the EKS cluster name
+                "deployment_name": deployment_name_to_scale,
+                "namespace": namespace,
+                "scaled_replicas": replicas
+            }
+        else:
+            err_msg = f"Failed to scale deployment '{deployment_name_to_scale}'. Error: {scale_result.stderr or scale_result.stdout}"
+            logger.error(err_msg)
+            await _append_message_to_chat(chat_request, "assistant", f"Error scaling deployment: {scale_result.stderr or scale_result.stdout}")
+            return {"status": "error", "message": err_msg, "instance_id": cluster_name}
+
+    except FileNotFoundError as fnf_err: # For kubeconfig not found
+        logger.error(f"File not found error during cloud-hosted scale for cluster '{cluster_name}': {str(fnf_err)}", exc_info=True)
+        await _append_message_to_chat(chat_request, "assistant", f"Configuration Error: {str(fnf_err)}")
+        return {"status": "error", "message": str(fnf_err), "instance_id": cluster_name}
+    except Exception as e:
+        err_msg = f"An unexpected error occurred during cloud-hosted scale for cluster '{cluster_name}', deployment '{deployment_name_to_scale}': {str(e)}"
+        logger.error(err_msg, exc_info=True)
+        await _append_message_to_chat(chat_request, "assistant", f"Critical Error: {err_msg}")
+        return {"status": "error", "message": err_msg, "instance_id": cluster_name}
