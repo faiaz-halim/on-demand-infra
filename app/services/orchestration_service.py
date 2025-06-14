@@ -17,6 +17,7 @@ from app.services import docker_service
 from app.services import git_service
 from app.services import k8s_service # Added for kubeconfig and Helm
 import docker
+import boto3
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
@@ -214,13 +215,65 @@ async def handle_cloud_local_decommission(
     logger.info(f"Decommission requested for cloud-local instance ID: {instance_id}")
     await _append_message_to_chat(chat_request, "assistant", f"Initiating decommission for instance: {instance_id}.")
     workspace_dir = pathlib.Path(settings.PERSISTENT_WORKSPACE_BASE_DIR) / "cloud-local" / instance_id
+
     if not workspace_dir.exists() or not workspace_dir.is_dir():
-        err_msg = f"Workspace for instance ID '{instance_id}' not found at expected location: {workspace_dir}."
+        err_msg = f"Workspace for instance ID '{instance_id}' not found at expected location: {workspace_dir}. Cannot perform decommission."
+        logger.error(err_msg)
         await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
         return {"status": "error", "message": err_msg, "instance_id": instance_id}
-    # ... (rest of the decommission logic) ...
-    await _append_message_to_chat(chat_request, "assistant", f"Decommission for instance '{instance_id}' (stubbed) completed.") # This line should be updated by full logic
-    return {"status": "success", "message": f"Instance {instance_id} decommissioned (stub).", "instance_id": instance_id} # This also
+
+    logger.info(f"Using Terraform workspace for decommission: {workspace_dir}")
+
+    aws_env_vars = {
+        "AWS_ACCESS_KEY_ID": aws_creds.aws_access_key_id.get_secret_value(),
+        "AWS_SECRET_ACCESS_KEY": aws_creds.aws_secret_access_key.get_secret_value(),
+        "AWS_DEFAULT_REGION": aws_creds.aws_region,
+    }
+    logger.info(f"AWS environment variables prepared for decommission. Region: {aws_creds.aws_region}.")
+
+    await _append_message_to_chat(chat_request, "assistant", f"Initializing Terraform for instance '{instance_id}' at {workspace_dir}...")
+    init_ok, init_out, init_err = await asyncio.to_thread(
+        terraform_service.run_terraform_init, str(workspace_dir), aws_env_vars
+    )
+    logger.info(f"Terraform init stdout for decommission of '{instance_id}':\n{init_out}")
+    if init_err:
+        logger.error(f"Terraform init stderr for decommission of '{instance_id}':\n{init_err}")
+
+    if not init_ok:
+        err_msg = f"Terraform init failed for instance '{instance_id}': {init_err or init_out}"
+        logger.error(err_msg)
+        await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+        return {"status": "error", "message": err_msg, "instance_id": instance_id}
+
+    await _append_message_to_chat(chat_request, "assistant", f"Starting Terraform destroy for instance '{instance_id}'. This may take a few minutes...")
+    destroy_ok, destroy_out, destroy_err = await asyncio.to_thread(
+        terraform_service.run_terraform_destroy, str(workspace_dir), aws_env_vars
+    )
+    logger.info(f"Terraform destroy stdout for '{instance_id}':\n{destroy_out}")
+    if destroy_err:
+        logger.error(f"Terraform destroy stderr for '{instance_id}':\n{destroy_err}")
+
+    if destroy_ok:
+        success_msg = f"Terraform destroy successful for instance '{instance_id}'."
+        logger.info(success_msg)
+        await _append_message_to_chat(chat_request, "assistant", success_msg)
+        cleanup_status_msg = ""
+        try:
+            await asyncio.to_thread(shutil.rmtree, str(workspace_dir))
+            logger.info(f"Successfully removed workspace directory: {workspace_dir}")
+            cleanup_status_msg = "Workspace directory successfully removed."
+        except Exception as e:
+            logger.error(f"Failed to remove workspace directory {workspace_dir}: {str(e)}", exc_info=True)
+            cleanup_status_msg = f"Workspace directory removal failed: {str(e)}. Manual cleanup may be required."
+
+        final_message = f"Instance '{instance_id}' decommissioned. {cleanup_status_msg}"
+        await _append_message_to_chat(chat_request, "assistant", final_message)
+        return {"status": "success", "message": final_message, "instance_id": instance_id}
+    else:
+        err_msg = f"Terraform destroy failed for instance '{instance_id}'. Stdout: {destroy_out} Stderr: {destroy_err}"
+        logger.error(err_msg)
+        await _append_message_to_chat(chat_request, "assistant", f"Error: Terraform destroy failed. Details: {destroy_err or destroy_out}")
+        return {"status": "error", "message": err_msg, "instance_id": instance_id}
 
 
 async def handle_cloud_local_redeploy(
@@ -232,12 +285,115 @@ async def handle_cloud_local_redeploy(
     aws_creds: Optional[AWSCredentials],
     chat_request: ChatCompletionRequest
 ) -> Dict[str, Any]:
-    # ... (implementation as before) ...
-    logger.info(f"Redeploy requested for cloud-local instance: {instance_id} (IP: {public_ip}), repo: {repo_url}, namespace: {namespace}")
-    await _append_message_to_chat(chat_request, "assistant", f"Initiating redeploy for instance {instance_id} (IP: {public_ip}) using repo {repo_url} for namespace {namespace}.")
-    # ... (rest of the redeploy logic) ...
-    await _append_message_to_chat(chat_request, "assistant", f"Redeploy for instance '{instance_id}' (stubbed) completed.")
-    return {"status": "success", "message": "Redeployment complete (stub).", "instance_id": instance_id}
+    logger.info(f"Redeploy requested for cloud-local instance: {instance_id} (IP: {public_ip}), new repo: {repo_url}, K8s namespace: {namespace}")
+    await _append_message_to_chat(chat_request, "assistant", f"Initiating redeploy for instance {instance_id} (IP: {public_ip}) with new repository {repo_url} in namespace {namespace}.")
+
+    try:
+        app_name = repo_url.split('/')[-1].replace('.git', '').lower().replace('_', '-')
+        logger.info(f"Derived app_name for redeploy: {app_name}")
+
+        if not settings.EC2_PRIVATE_KEY_BASE_PATH:
+            raise ValueError("Server configuration error: EC2_PRIVATE_KEY_BASE_PATH is not set.")
+
+        private_key_full_path = pathlib.Path(settings.EC2_PRIVATE_KEY_BASE_PATH) / ec2_key_name
+        if not private_key_full_path.exists():
+            raise FileNotFoundError(f"SSH private key '{ec2_key_name}' not found at configured base path.")
+
+        # Use a unique temporary path for cloning the new repo version on the remote EC2 instance
+        remote_repo_clone_path = f"/tmp/{app_name}_redeploy_src_{uuid.uuid4().hex[:6]}"
+
+        # 1. Git Clone (Remote)
+        await _append_message_to_chat(chat_request, "assistant", f"Cloning new version of repository {repo_url} on EC2 instance {public_ip} at {remote_repo_clone_path}...")
+        clone_command = f"rm -rf {remote_repo_clone_path} && git clone --depth 1 {repo_url} {remote_repo_clone_path}"
+        clone_stdout, clone_stderr, clone_exit_code = await asyncio.to_thread(
+            ssh_service.execute_remote_command, public_ip, settings.EC2_SSH_USERNAME, str(private_key_full_path), clone_command
+        )
+        if clone_exit_code != 0:
+            err_msg = f"Failed to clone new repository version on EC2: {clone_stderr or clone_stdout}"
+            logger.error(err_msg)
+            await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+            return {"status": "error", "message": err_msg, "instance_id": instance_id}
+        await _append_message_to_chat(chat_request, "assistant", "New repository version cloned successfully on EC2.")
+
+        # 2. Docker Build (Remote)
+        new_image_tag = f"{app_name}:redeploy-{uuid.uuid4().hex[:8]}"
+        await _append_message_to_chat(chat_request, "assistant", f"Building Docker image {new_image_tag} on EC2 from {remote_repo_clone_path}...")
+        docker_build_command = f"cd {remote_repo_clone_path} && sudo docker build -t {new_image_tag} ."
+        build_stdout, build_stderr, build_exit_code = await asyncio.to_thread(
+            ssh_service.execute_remote_command, public_ip, settings.EC2_SSH_USERNAME, str(private_key_full_path), docker_build_command
+        )
+        if build_exit_code != 0:
+            err_msg = f"Failed to build Docker image on EC2: {build_stderr or build_stdout}"
+            logger.error(err_msg)
+            await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+            return {"status": "error", "message": err_msg, "instance_id": instance_id}
+        await _append_message_to_chat(chat_request, "assistant", f"Docker image {new_image_tag} built successfully on EC2.")
+
+        # 3. Load Image to Kind (Remote)
+        await _append_message_to_chat(chat_request, "assistant", f"Loading image {new_image_tag} into Kind cluster '{settings.KIND_CLUSTER_NAME}' on EC2...")
+        load_image_command = f"sudo kind load docker-image {new_image_tag} --name {settings.KIND_CLUSTER_NAME}"
+        load_stdout, load_stderr, load_exit_code = await asyncio.to_thread(
+            ssh_service.execute_remote_command, public_ip, settings.EC2_SSH_USERNAME, str(private_key_full_path), load_image_command
+        )
+        if load_exit_code != 0:
+            err_msg = f"Failed to load image to Kind cluster: {load_stderr or load_stdout}"
+            logger.error(err_msg)
+            await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+            return {"status": "error", "message": err_msg, "instance_id": instance_id}
+        await _append_message_to_chat(chat_request, "assistant", "Image loaded into Kind cluster successfully.")
+
+        # 4. Update Kubernetes Deployment (Remote)
+        # Assuming deployment name and container name match app_name
+        deployment_name = app_name
+        container_name_to_update = app_name
+        await _append_message_to_chat(chat_request, "assistant", f"Updating Kubernetes deployment '{deployment_name}' in namespace '{namespace}' to use new image {new_image_tag}...")
+        update_command = f"sudo kubectl set image deployment/{deployment_name} {container_name_to_update}={new_image_tag} --namespace {namespace}"
+        update_stdout, update_stderr, update_exit_code = await asyncio.to_thread(
+            ssh_service.execute_remote_command, public_ip, settings.EC2_SSH_USERNAME, str(private_key_full_path), update_command
+        )
+        if update_exit_code != 0:
+            err_msg = f"Failed to update Kubernetes deployment: {update_stderr or update_stdout}"
+            logger.error(err_msg)
+            await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+            return {"status": "error", "message": err_msg, "instance_id": instance_id}
+        await _append_message_to_chat(chat_request, "assistant", "Kubernetes deployment updated successfully. Rollout may take a few moments.")
+
+        # 5. Cleanup (Remote)
+        await _append_message_to_chat(chat_request, "assistant", f"Cleaning up temporary source code directory {remote_repo_clone_path} on EC2...")
+        cleanup_command = f"rm -rf {remote_repo_clone_path}"
+        # Execute cleanup, log errors but don't fail the entire operation if only cleanup fails
+        clean_stdout, clean_stderr, clean_exit_code = await asyncio.to_thread(
+            ssh_service.execute_remote_command, public_ip, settings.EC2_SSH_USERNAME, str(private_key_full_path), cleanup_command
+        )
+        if clean_exit_code != 0:
+            logger.warning(f"Failed to cleanup remote directory {remote_repo_clone_path} on {public_ip}. Stderr: {clean_stderr or clean_stdout}")
+            await _append_message_to_chat(chat_request, "assistant", f"Warning: Failed to cleanup temporary directory on EC2: {remote_repo_clone_path}. Manual cleanup may be needed.")
+        else:
+            await _append_message_to_chat(chat_request, "assistant", "Remote cleanup successful.")
+
+        final_success_message = f"Redeployment of application '{app_name}' on instance '{instance_id}' (IP: {public_ip}) in namespace '{namespace}' with new image '{new_image_tag}' completed successfully."
+        logger.info(final_success_message)
+        await _append_message_to_chat(chat_request, "assistant", final_success_message)
+        return {
+            "status": "success",
+            "message": final_success_message,
+            "instance_id": instance_id,
+            "new_image_tag": new_image_tag
+        }
+
+    except FileNotFoundError as fnf_err:
+        logger.error(f"Configuration error during redeploy for {instance_id}: {str(fnf_err)}", exc_info=True)
+        await _append_message_to_chat(chat_request, "assistant", f"Configuration Error: {str(fnf_err)}")
+        return {"status": "error", "message": str(fnf_err), "instance_id": instance_id}
+    except ValueError as val_err:
+        logger.error(f"Value error during redeploy for {instance_id}: {str(val_err)}", exc_info=True)
+        await _append_message_to_chat(chat_request, "assistant", f"Configuration Error: {str(val_err)}")
+        return {"status": "error", "message": str(val_err), "instance_id": instance_id}
+    except Exception as e:
+        err_msg = f"An unexpected error occurred during cloud-local redeploy for instance '{instance_id}': {str(e)}"
+        logger.error(err_msg, exc_info=True)
+        await _append_message_to_chat(chat_request, "assistant", f"Critical Error: {err_msg}")
+        return {"status": "error", "message": err_msg, "instance_id": instance_id}
 
 
 async def handle_cloud_hosted_deployment(
@@ -533,13 +689,42 @@ async def handle_cloud_hosted_deployment(
             return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
 
         nlb_dns_name, _ = nlb_details # NLB Hosted Zone ID from kubectl is not reliable/available.
-        # IMPORTANT: nlb_hosted_zone_id for the TF template MUST be the canonical hosted zone ID for the NLB.
-        # This typically needs to be fetched via AWS API (e.g. elbv2.describe_load_balancers).
-        # This is a known gap and will require a new service function or direct boto3 call here.
-        # For now, using a placeholder. This will cause TF apply for Route53 alias to fail if not correctly sourced.
-        nlb_canonical_hosted_zone_id_placeholder = "Z00000000000000000000" # FIXME: THIS IS A CRITICAL PLACEHOLDER
-        logger.warning(f"Using PLACEHOLDER NLB Canonical Hosted Zone ID: {nlb_canonical_hosted_zone_id_placeholder}. Route53 alias record will likely fail without the correct ID.")
-        await _append_message_to_chat(chat_request, "assistant", f"Nginx Load Balancer DNS: {nlb_dns_name}. Proceeding with domain and certificate setup...")
+
+        nlb_canonical_hosted_zone_id = None
+        try:
+            elbv2_client = boto3.client(
+                'elbv2',
+                aws_access_key_id=aws_creds.aws_access_key_id.get_secret_value(),
+                aws_secret_access_key=aws_creds.aws_secret_access_key.get_secret_value(),
+                region_name=aws_creds.aws_region
+            )
+            all_lbs_response = elbv2_client.describe_load_balancers()
+            found_lb = None
+            for lb in all_lbs_response.get('LoadBalancers', []):
+                if lb.get('DNSName') == nlb_dns_name:
+                    found_lb = lb
+                    break
+
+            if found_lb:
+                nlb_canonical_hosted_zone_id = found_lb.get('CanonicalHostedZoneId')
+                if nlb_canonical_hosted_zone_id:
+                    logger.info(f"Successfully fetched CanonicalHostedZoneId '{nlb_canonical_hosted_zone_id}' for NLB '{nlb_dns_name}'.")
+                    await _append_message_to_chat(chat_request, "assistant", f"Successfully fetched NLB details for Route53 setup.")
+                else:
+                    logger.error(f"Found NLB '{nlb_dns_name}' but it does not have a CanonicalHostedZoneId.")
+                    await _append_message_to_chat(chat_request, "assistant", f"Error: NLB '{nlb_dns_name}' found, but CanonicalHostedZoneId is missing. Cannot proceed with Route53 alias record.")
+                    raise ValueError(f"NLB '{nlb_dns_name}' found, but CanonicalHostedZoneId is missing.")
+            else:
+                logger.error(f"Could not find NLB with DNSName '{nlb_dns_name}' via AWS API to fetch its CanonicalHostedZoneId.")
+                await _append_message_to_chat(chat_request, "assistant", f"Error: Could not find NLB with DNSName '{nlb_dns_name}' using AWS API. Cannot determine CanonicalHostedZoneId for Route53.")
+                raise ValueError(f"Could not find NLB with DNSName '{nlb_dns_name}' via AWS API.")
+
+        except Exception as e_elb:
+            logger.error(f"Failed to describe load balancers or get CanonicalHostedZoneId for '{nlb_dns_name}': {str(e_elb)}", exc_info=True)
+            await _append_message_to_chat(chat_request, "assistant", f"Error fetching NLB details from AWS API: {str(e_elb)}")
+            raise e_elb
+
+        await _append_message_to_chat(chat_request, "assistant", f"Nginx Load Balancer DNS: {nlb_dns_name}, Canonical HZID: {nlb_canonical_hosted_zone_id}. Proceeding with domain and certificate setup...")
 
         # 12. Terraform for Route53/ACM (if base_hosted_zone_id and app_subdomain_label are provided)
         app_full_domain_name = None
@@ -561,7 +746,7 @@ async def handle_cloud_hosted_deployment(
                 "base_hosted_zone_id": chat_request.base_hosted_zone_id,
                 "app_full_domain_name": app_full_domain_name,
                 "nlb_dns_name": nlb_dns_name,
-                "nlb_hosted_zone_id": nlb_canonical_hosted_zone_id_placeholder # FIXME: Use actual NLB canonical HZID
+                "nlb_hosted_zone_id": nlb_canonical_hosted_zone_id
             }
             route53_tf_file = await asyncio.to_thread(
                 terraform_service.generate_route53_acm_tf_config,
@@ -763,14 +948,65 @@ async def handle_cloud_local_scale(
     """
     Handles scaling a Kubernetes deployment within a cloud-local instance's Kind cluster.
     """
-    logger.info(f"Scale requested for instance: {instance_id} (IP: {public_ip}), namespace: {namespace}, to {replicas} replicas.")
-    await _append_message_to_chat(chat_request, "assistant", f"Initiating scale operation for instance {instance_id} to {replicas} replicas in namespace {namespace}.")
+    logger.info(f"Cloud-local scale operation started for instance: {instance_id} (IP: {public_ip}), namespace: {namespace}, to {replicas} replicas.")
+    await _append_message_to_chat(chat_request, "assistant", f"Initiating scale operation for instance '{instance_id}' to {replicas} replicas in namespace '{namespace}'.")
 
-    message_content = f"Scale operation for instance '{instance_id}' to {replicas} replicas received. Actual scaling logic (kubectl scale on EC2) is not yet fully implemented."
-    logger.warning(message_content)
-    await _append_message_to_chat(chat_request, "assistant", message_content)
+    try:
+        # Derive app_name (deployment name) from github_repo_url in the chat_request
+        if not chat_request.github_repo_url:
+            err_msg = "GitHub repository URL is required to determine the deployment name for scaling, but it was not provided in the request."
+            logger.error(err_msg)
+            await _append_message_to_chat(chat_request, "assistant", f"Configuration Error: {err_msg}")
+            return {"status": "error", "message": err_msg, "instance_id": instance_id}
 
-    return {"status": "pending_implementation", "mode": "cloud-local", "action": "scale", "instance_id": instance_id, "message": message_content}
+        derived_app_name = chat_request.github_repo_url.split('/')[-1].replace('.git', '').lower().replace('_', '-')
+        logger.info(f"Derived deployment name for scaling: {derived_app_name}")
+
+        if not settings.EC2_PRIVATE_KEY_BASE_PATH:
+            raise ValueError("Server configuration error: EC2_PRIVATE_KEY_BASE_PATH is not set.")
+
+        private_key_full_path = pathlib.Path(settings.EC2_PRIVATE_KEY_BASE_PATH) / ec2_key_name
+        if not private_key_full_path.exists():
+            raise FileNotFoundError(f"SSH private key '{ec2_key_name}' not found at configured base path: {private_key_full_path}")
+
+        # Execute Remote Kubectl Scale Command
+        scale_command = f"sudo kubectl scale deployment/{derived_app_name} --replicas={replicas} --namespace {namespace}"
+        await _append_message_to_chat(chat_request, "assistant", f"Executing scale command on EC2 instance {public_ip}: {scale_command}")
+
+        scale_stdout, scale_stderr, scale_exit_code = await asyncio.to_thread(
+            ssh_service.execute_remote_command, public_ip, settings.EC2_SSH_USERNAME, str(private_key_full_path), scale_command
+        )
+
+        if scale_exit_code == 0:
+            success_message = f"Deployment '{derived_app_name}' in namespace '{namespace}' successfully scaled to {replicas} replicas on instance '{instance_id}'."
+            logger.info(success_message)
+            await _append_message_to_chat(chat_request, "assistant", success_message)
+            return {
+                "status": "success",
+                "message": success_message,
+                "instance_id": instance_id,
+                "namespace": namespace,
+                "scaled_replicas": replicas
+            }
+        else:
+            err_msg = f"Failed to scale deployment '{derived_app_name}' on instance '{instance_id}'. Kubectl stderr: {scale_stderr or scale_stdout}"
+            logger.error(err_msg)
+            await _append_message_to_chat(chat_request, "assistant", f"Error scaling deployment: {scale_stderr or scale_stdout}")
+            return {"status": "error", "message": err_msg, "instance_id": instance_id}
+
+    except FileNotFoundError as fnf_err:
+        logger.error(f"Configuration error during scale for {instance_id}: {str(fnf_err)}", exc_info=True)
+        await _append_message_to_chat(chat_request, "assistant", f"Configuration Error: {str(fnf_err)}")
+        return {"status": "error", "message": str(fnf_err), "instance_id": instance_id}
+    except ValueError as val_err: # Handles missing EC2_PRIVATE_KEY_BASE_PATH
+        logger.error(f"Value error during scale for {instance_id}: {str(val_err)}", exc_info=True)
+        await _append_message_to_chat(chat_request, "assistant", f"Configuration Error: {str(val_err)}")
+        return {"status": "error", "message": str(val_err), "instance_id": instance_id}
+    except Exception as e:
+        err_msg = f"An unexpected error occurred during cloud-local scale for instance '{instance_id}': {str(e)}"
+        logger.error(err_msg, exc_info=True)
+        await _append_message_to_chat(chat_request, "assistant", f"Critical Error: {err_msg}")
+        return {"status": "error", "message": err_msg, "instance_id": instance_id}
 
 
 async def handle_cloud_hosted_decommission(

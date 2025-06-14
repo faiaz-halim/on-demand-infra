@@ -54,6 +54,7 @@ class ChatCompletionRequest(BaseModel):
 
     # Cloud-specific parameters
     aws_credentials: Optional[AWSCredentials] = Field(default=None, description="AWS credentials, required for cloud-local and cloud-hosted modes.")
+    instance_name: Optional[str] = Field(default=None, description="User-defined name for the instance being created or managed. This can be used for tagging resources or for display purposes.")
     ec2_key_name: Optional[str] = Field(default=None, description="Name of the EC2 key pair to use for SSH access. Required for cloud-local mode if not set in server defaults.")
     public_ip: Optional[str] = Field(default=None, description="Public IP of the EC2 instance to manage (e.g. for redeploy, scale actions on an existing cloud-local instance).")
     # instance_size: Optional[str] = Field(default=None, description="EC2 instance size for cloud-local mode. Overrides server default.")
