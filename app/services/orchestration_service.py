@@ -136,29 +136,38 @@ async def handle_cloud_local_deployment(
             return {"status": "error", "mode": "cloud-local", "message": err_msg}
         private_key_full_path = str(pathlib.Path(settings.EC2_PRIVATE_KEY_BASE_PATH) / ec2_key_name_to_use)
         if not pathlib.Path(private_key_full_path).exists():
-            err_msg = f"SSH private key '{ec2_key_name_to_use}' not found at {private_key_full_path}."
+            err_msg = f"SSH private key '{ec2_key_name_to_use}' not found at {private_key_full_path}. Please ensure the key exists on the server at the configured EC2_PRIVATE_KEY_BASE_PATH or was provided correctly."
             await _append_message_to_chat(chat_request, "assistant", f"Configuration Error: {err_msg}")
             return {"status": "error", "mode": "cloud-local", "message": err_msg}
 
         remote_repo_path = f"{settings.EC2_DEFAULT_REPO_PATH}/{app_name}"
         clone_command = f"sudo rm -rf {remote_repo_path} && git clone --depth 1 {repo_url} {remote_repo_path}"
         await _append_message_to_chat(chat_request, "assistant", f"Cloning repository {repo_url} on EC2...")
-        await asyncio.sleep(15)
-        _, clone_stderr, clone_exit_code = await asyncio.to_thread(ssh_service.execute_remote_command, public_ip, settings.EC2_SSH_USERNAME, private_key_full_path, clone_command)
-        if clone_exit_code != 0:  err_msg = f"Failed to clone repo on EC2: {clone_stderr}" ; await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}"); return {"status": "error", "message": err_msg}
+        await asyncio.sleep(15) # Allowing some time for network/instance to be fully ready
+        _, clone_stderr, clone_exit_code = await asyncio.to_thread(ssh_service.execute_remote_command, public_ip, settings.EC2_SSH_USERNAME, str(private_key_full_path), clone_command)
+        if clone_exit_code != 0:
+            err_msg = f"Failed to clone repository '{repo_url}' on EC2 instance {public_ip}. Please check the repository URL and ensure the EC2 instance has network access to it. SSH command stderr: {clone_stderr or 'No stderr'}"
+            await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+            return {"status": "error", "mode": "cloud-local", "message": err_msg}
         await _append_message_to_chat(chat_request, "assistant", "Repository cloned.")
 
         built_image_tag = f"{app_name}:latest"
         docker_build_command = f"cd {remote_repo_path} && sudo docker build -t {built_image_tag} ."
         await _append_message_to_chat(chat_request, "assistant", f"Building Docker image {built_image_tag} on EC2...")
-        _, build_stderr, build_exit_code = await asyncio.to_thread(ssh_service.execute_remote_command, public_ip, settings.EC2_SSH_USERNAME, private_key_full_path, docker_build_command)
-        if build_exit_code != 0: err_msg = f"Failed to build Docker image on EC2: {build_stderr}" ; await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}"); return {"status": "error", "message": err_msg}
+        _, build_stderr, build_exit_code = await asyncio.to_thread(ssh_service.execute_remote_command, public_ip, settings.EC2_SSH_USERNAME, str(private_key_full_path), docker_build_command)
+        if build_exit_code != 0:
+            err_msg = f"Failed to build Docker image on EC2 instance {public_ip} from repo {repo_url}. Review build logs for details. SSH command stderr: {build_stderr or 'No stderr'}"
+            await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+            return {"status": "error", "mode": "cloud-local", "message": err_msg}
         await _append_message_to_chat(chat_request, "assistant", "Docker image built.")
 
         load_image_command = f"sudo kind load docker-image {built_image_tag} --name {settings.KIND_CLUSTER_NAME}"
         await _append_message_to_chat(chat_request, "assistant", f"Loading image into Kind...")
-        _, load_stderr, load_exit_code = await asyncio.to_thread(ssh_service.execute_remote_command, public_ip, settings.EC2_SSH_USERNAME, private_key_full_path, load_image_command)
-        if load_exit_code != 0: err_msg = f"Failed to load image to Kind: {load_stderr}" ; await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}"); return {"status": "error", "message": err_msg}
+        _, load_stderr, load_exit_code = await asyncio.to_thread(ssh_service.execute_remote_command, public_ip, settings.EC2_SSH_USERNAME, str(private_key_full_path), load_image_command)
+        if load_exit_code != 0:
+            err_msg = f"Failed to load Docker image '{built_image_tag}' to Kind cluster on EC2 instance {public_ip}. SSH command stderr: {load_stderr or 'No stderr'}"
+            await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+            return {"status": "error", "mode": "cloud-local", "message": err_msg}
         await _append_message_to_chat(chat_request, "assistant", "Image loaded to Kind.")
 
         container_port = settings.EC2_DEFAULT_APP_PORTS[0]['port'] if settings.EC2_DEFAULT_APP_PORTS else 80
@@ -185,11 +194,14 @@ async def handle_cloud_local_deployment(
 
         apply_command = f"sudo kubectl apply --namespace {namespace} -f {remote_manifest_dir}/"
         await _append_message_to_chat(chat_request, "assistant", "Applying K8s manifests on EC2...")
-        _, apply_m_stderr, apply_m_exit_code = await asyncio.to_thread(ssh_service.execute_remote_command, public_ip, settings.EC2_SSH_USERNAME, private_key_full_path, apply_command)
-        if apply_m_exit_code != 0: err_msg = f"Failed to apply K8s manifests: {apply_m_stderr}" ; await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}"); return {"status": "error", "message": err_msg}
+        _, apply_m_stderr, apply_m_exit_code = await asyncio.to_thread(ssh_service.execute_remote_command, public_ip, settings.EC2_SSH_USERNAME, str(private_key_full_path), apply_command)
+        if apply_m_exit_code != 0:
+            err_msg = f"Failed to apply Kubernetes manifests to Kind cluster on EC2 instance {public_ip}. SSH command stderr: {apply_m_stderr or 'No stderr'}"
+            await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+            return {"status": "error", "mode": "cloud-local", "message": err_msg}
 
         cleanup_remote_cmd = f"rm -rf {remote_manifest_dir}"
-        await asyncio.to_thread(ssh_service.execute_remote_command, public_ip, settings.EC2_SSH_USERNAME, private_key_full_path, cleanup_remote_cmd)
+        await asyncio.to_thread(ssh_service.execute_remote_command, public_ip, settings.EC2_SSH_USERNAME, str(private_key_full_path), cleanup_remote_cmd)
 
         app_url = f"http://{public_ip}:{node_port_num}"
         final_success_message = f"Application '{app_name}' deployed to Kind on EC2 instance '{instance_name_tag}' (IP: {public_ip}) in namespace '{namespace}'. Instance ID for management: {instance_name_tag}. Application may be accessible at: {app_url}"
@@ -200,10 +212,10 @@ async def handle_cloud_local_deployment(
                 "ec2_public_ip": public_ip, "built_image_tag": built_image_tag, "app_url": app_url}
 
     except Exception as e:
-        err_msg = f"An unexpected error in handle_cloud_local_deployment: {str(e)}"
-        logger.error(err_msg, exc_info=True)
+        err_msg = f"An unexpected error in handle_cloud_local_deployment for instance '{instance_name_tag}': {str(e)}"
+        logger.error(f"An unexpected error in handle_cloud_local_deployment for instance '{instance_name_tag}': {str(e)}", exc_info=True)
         await _append_message_to_chat(chat_request, "assistant", f"Critical Error: {err_msg}")
-        return {"status": "error", "mode": "cloud-local", "message": err_msg}
+        return {"status": "error", "mode": "cloud-local", "message": err_msg, "instance_id": instance_name_tag}
 
 
 async def handle_cloud_local_decommission(
@@ -534,12 +546,35 @@ async def handle_cloud_hosted_deployment(
         logger.info(f"Created temporary clone workspace: {clone_workspace_path}")
         await _append_message_to_chat(chat_request, "assistant", f"Cloning repository {repo_url} locally for image build...")
 
-        cloned_repo_details = await asyncio.to_thread(git_service.clone_repository, repo_url, str(clone_workspace_path))
-        if not cloned_repo_details or not cloned_repo_details.get("success"):
-            err_msg = f"Failed to clone repository {repo_url}: {cloned_repo_details.get('error', 'Unknown error')}"
+        cloned_repo_details = await asyncio.to_thread(git_service.clone_repository, repo_url, clone_workspace_path) # type: ignore
+        # The above type: ignore is because clone_repository now returns a Path, not a dict.
+        # This part of the code was based on an older version of git_service.clone_repository
+        # For now, let's assume it might return a dict with 'success' and 'error' keys if it failed in a specific way,
+        # or raises an exception (like GitCloneError) which would be caught by the main try/except.
+        # A more robust way would be to update clone_repository to consistently raise exceptions on failure.
+        # For this subtask, focusing on error message text. If clone_repository raises an exception, it's caught below.
+        # If it returns a dict (older behavior), this check handles it.
+        if isinstance(cloned_repo_details, dict) and not cloned_repo_details.get("success"): # Check for old dict error format
+            err_msg = f"Failed to clone repository {repo_url} locally on the MCP server: {cloned_repo_details.get('error', 'Unknown error')}. Please check the repository URL and network access."
             logger.error(err_msg)
             await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
-            # No need to rmtree here, finally block will handle it.
+            return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
+
+        # If clone_repository returned a Path object (current behavior for success)
+        actual_cloned_path: pathlib.Path
+        if isinstance(cloned_repo_details, pathlib.Path):
+            actual_cloned_path = cloned_repo_details
+        elif isinstance(cloned_repo_details, dict) and cloned_repo_details.get("success") and cloned_repo_details.get("path"): # Older dict success format
+             actual_cloned_path = pathlib.Path(cloned_repo_details["path"])
+        else: # Fallback if structure is unexpected or if clone_repository path is directly in clone_workspace_path
+            actual_cloned_path = clone_workspace_path / repo_name_from_url
+            if not actual_cloned_path.exists() or not actual_cloned_path.is_dir(): # Check if it's directly in clone_workspace_path
+                actual_cloned_path = clone_workspace_path
+
+        if not actual_cloned_path.exists() or not actual_cloned_path.is_dir(): # Final check
+            err_msg = f"Cloned repository directory structure unexpected or not found at {actual_cloned_path} or {clone_workspace_path}"
+            logger.error(err_msg)
+            await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
             return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
 
         # Assuming clone_repository clones into a subdirectory named after the repo
@@ -563,11 +598,10 @@ async def handle_cloud_hosted_deployment(
         logger.info(f"Docker build logs for {local_image_tag}:\n{build_logs}")
 
         if not build_result.get("success"):
-            err_msg = f"Failed to build Docker image {local_image_tag}: {build_result.get('error', 'Unknown build error')}"
-            logger.error(err_msg)
-            # Provide a snippet of build logs if available
             log_snippet = build_logs[-500:] if build_logs else "No logs available."
-            await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}\nBuild Log Snippet:\n{log_snippet}")
+            err_msg = f"Failed to build Docker image {local_image_tag} locally on the MCP server: {build_result.get('error', 'Unknown build error')}. Log snippet: {log_snippet}"
+            logger.error(err_msg)
+            await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
             return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
 
         await _append_message_to_chat(chat_request, "assistant", f"Docker image {local_image_tag} built successfully.")
@@ -581,7 +615,7 @@ async def handle_cloud_hosted_deployment(
             aws_creds.aws_secret_access_key.get_secret_value()
         )
         if not login_details:
-            err_msg = "Failed to get ECR login credentials."
+            err_msg = "Failed to get AWS ECR login credentials. Please check the provided AWS credentials and MCP server permissions."
             logger.error(err_msg)
             await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
             return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
@@ -592,19 +626,19 @@ async def handle_cloud_hosted_deployment(
             docker_client_instance = docker.from_env()
         except Exception as e:
             err_msg = f"Failed to initialize Docker client for ECR login: {str(e)}"
-            logger.error(err_msg, exc_info=True)
+            logger.error(err_msg, exc_info=True) # exc_info=True added
             await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
             return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
 
         login_ok = await asyncio.to_thread(
             docker_service.login_to_ecr,
             docker_client_instance,
-            ecr_registry_from_token, # This is like https://<account_id>.dkr.ecr.<region>.amazonaws.com
+            ecr_registry_from_token,
             ecr_username,
             ecr_password
         )
         if not login_ok:
-            err_msg = "ECR login failed."
+            err_msg = "AWS ECR login failed. Please check the provided AWS credentials and MCP server permissions for ECR access."
             logger.error(err_msg)
             await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
             return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
@@ -612,18 +646,17 @@ async def handle_cloud_hosted_deployment(
         await _append_message_to_chat(chat_request, "assistant", "Successfully authenticated with ECR.")
 
         # 8. Push Image to ECR
-        # Use tf_ecr_repo_name_output (actual name from TF) and ecr_registry_from_token (registry part)
         await _append_message_to_chat(chat_request, "assistant", f"Pushing image {local_image_tag} to ECR repository {tf_ecr_repo_name_output}...")
         pushed_image_uri = await asyncio.to_thread(
             docker_service.push_image_to_ecr,
             docker_client_instance,
             local_image_tag,
             tf_ecr_repo_name_output,
-            ecr_registry_from_token, # Pass the registry URL, push_image_to_ecr will format it
-            image_version_tag="latest" # Or use a more specific tag from build
+            ecr_registry_from_token,
+            image_version_tag="latest"
         )
         if not pushed_image_uri:
-            err_msg = f"Failed to push image {local_image_tag} to ECR repository {tf_ecr_repo_name_output}."
+            err_msg = f"Failed to push image {local_image_tag} to ECR repository {tf_ecr_repo_name_output}. Ensure the repository exists and permissions are correct."
             logger.error(err_msg)
             await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
             return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
@@ -632,8 +665,8 @@ async def handle_cloud_hosted_deployment(
 
         # 9. Generate Kubeconfig for EKS cluster
         await _append_message_to_chat(chat_request, "assistant", "Generating Kubeconfig for EKS cluster...")
-        if not eks_ca_data: # Should not happen if apply_ok and outputs are processed correctly
-            err_msg = "EKS CA data is missing, cannot generate kubeconfig."
+        if not eks_ca_data:
+            err_msg = "EKS CA data is missing, cannot generate kubeconfig." # No change needed, already specific
             logger.error(err_msg)
             await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
             return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
@@ -644,11 +677,11 @@ async def handle_cloud_hosted_deployment(
             endpoint_url=eks_endpoint,
             ca_data=eks_ca_data,
             aws_region=aws_creds.aws_region,
-            user_arn=settings.EKS_DEFAULT_USER_ARN, # Using default from settings
+            user_arn=settings.EKS_DEFAULT_USER_ARN,
             output_dir=str(workspace_dir_path)
         )
         if not kubeconfig_file_path:
-            err_msg = "Failed to generate Kubeconfig for EKS."
+            err_msg = f"Critical Error: Failed to generate Kubeconfig for EKS cluster '{cluster_name}'. This might indicate an issue with EKS cluster provisioning or output retrieval."
             logger.error(err_msg)
             await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
             return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
@@ -656,19 +689,16 @@ async def handle_cloud_hosted_deployment(
         await _append_message_to_chat(chat_request, "assistant", f"Kubeconfig saved to workspace. Installing Nginx Ingress Controller via Helm...")
 
         # 10. Install Nginx Ingress Controller using Helm
-        # The namespace for Nginx is typically 'ingress-nginx', not the app's namespace.
         nginx_install_ok = await asyncio.to_thread(
             k8s_service.install_nginx_ingress_helm,
             kubeconfig_path=kubeconfig_file_path,
-            namespace="ingress-nginx", # Standard namespace for nginx ingress
+            namespace="ingress-nginx",
             helm_chart_version=settings.NGINX_HELM_CHART_VERSION
         )
         if not nginx_install_ok:
-            err_msg = "Failed to install Nginx Ingress Controller via Helm."
+            err_msg = f"Failed to install Nginx Ingress Controller via Helm on EKS cluster '{cluster_name}'. Check Helm and Kubernetes logs on the cluster if possible."
             logger.error(err_msg)
             await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
-            # Note: Kubeconfig and infra are up. App manifests are next.
-            # Depending on policy, might still want to proceed or offer user choice.
             return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
 
         await _append_message_to_chat(chat_request, "assistant", "Nginx Ingress Controller installation successful.")
@@ -677,18 +707,18 @@ async def handle_cloud_hosted_deployment(
         await _append_message_to_chat(chat_request, "assistant", "Fetching Load Balancer details for Nginx Ingress...")
         nlb_details = await asyncio.to_thread(
             k8s_service.get_load_balancer_details,
-            kubeconfig_path=kubeconfig_file_path, # From previous step
+            kubeconfig_path=kubeconfig_file_path,
             service_name=settings.NGINX_INGRESS_SERVICE_NAME,
-            namespace=settings.NGINX_INGRESS_NAMESPACE, # Nginx is in its own namespace
+            namespace=settings.NGINX_INGRESS_NAMESPACE,
             timeout_seconds=settings.LOAD_BALANCER_DETAILS_TIMEOUT_SECONDS
         )
         if not nlb_details or not nlb_details[0]:
-            err_msg = "Failed to get Nginx Load Balancer DNS details. Cannot proceed with Route53/ACM setup."
+            err_msg = f"Failed to get Nginx Load Balancer DNS details from EKS cluster '{cluster_name}'. The NLB might not have provisioned correctly or is taking too long."
             logger.error(err_msg)
             await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
             return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
 
-        nlb_dns_name, _ = nlb_details # NLB Hosted Zone ID from kubectl is not reliable/available.
+        nlb_dns_name, _ = nlb_details
 
         nlb_canonical_hosted_zone_id = None
         try:
@@ -711,18 +741,23 @@ async def handle_cloud_hosted_deployment(
                     logger.info(f"Successfully fetched CanonicalHostedZoneId '{nlb_canonical_hosted_zone_id}' for NLB '{nlb_dns_name}'.")
                     await _append_message_to_chat(chat_request, "assistant", f"Successfully fetched NLB details for Route53 setup.")
                 else:
+                    # This specific error message will be part of the ValueError raised.
                     logger.error(f"Found NLB '{nlb_dns_name}' but it does not have a CanonicalHostedZoneId.")
                     await _append_message_to_chat(chat_request, "assistant", f"Error: NLB '{nlb_dns_name}' found, but CanonicalHostedZoneId is missing. Cannot proceed with Route53 alias record.")
-                    raise ValueError(f"NLB '{nlb_dns_name}' found, but CanonicalHostedZoneId is missing.")
+                    raise ValueError(f"Critical: NLB '{nlb_dns_name}' was found, but its CanonicalHostedZoneId is missing. Cannot configure Route53 alias record.")
             else:
+                 # This specific error message will be part of the ValueError raised.
                 logger.error(f"Could not find NLB with DNSName '{nlb_dns_name}' via AWS API to fetch its CanonicalHostedZoneId.")
                 await _append_message_to_chat(chat_request, "assistant", f"Error: Could not find NLB with DNSName '{nlb_dns_name}' using AWS API. Cannot determine CanonicalHostedZoneId for Route53.")
-                raise ValueError(f"Could not find NLB with DNSName '{nlb_dns_name}' via AWS API.")
+                raise ValueError(f"Critical: Could not find an NLB with DNSName '{nlb_dns_name}' via AWS API. Cannot configure Route53 alias record.")
 
-        except Exception as e_elb:
-            logger.error(f"Failed to describe load balancers or get CanonicalHostedZoneId for '{nlb_dns_name}': {str(e_elb)}", exc_info=True)
-            await _append_message_to_chat(chat_request, "assistant", f"Error fetching NLB details from AWS API: {str(e_elb)}")
-            raise e_elb
+        except Exception as e_elb: # Catch Boto3 client errors or the ValueErrors raised above
+            # If the error is one of our custom ValueErrors for HZID/NLB not found, its message is already specific.
+            # Otherwise, it's an unexpected Boto3/AWS API error.
+            specific_error_message = str(e_elb) if isinstance(e_elb, ValueError) else f"Error fetching NLB details from AWS API: {str(e_elb)}"
+            logger.error(f"Failed to describe load balancers or get CanonicalHostedZoneId for '{nlb_dns_name}': {specific_error_message}", exc_info=True)
+            await _append_message_to_chat(chat_request, "assistant", specific_error_message) # Use the specific error message
+            raise e_elb # Re-raise to be caught by the main try/except which will then use this message.
 
         await _append_message_to_chat(chat_request, "assistant", f"Nginx Load Balancer DNS: {nlb_dns_name}, Canonical HZID: {nlb_canonical_hosted_zone_id}. Proceeding with domain and certificate setup...")
 
@@ -921,9 +956,11 @@ async def handle_cloud_hosted_deployment(
         }
 
     except Exception as e:
-        err_msg = f"An unexpected error occurred in handle_cloud_hosted_deployment: {str(e)}"
-        logger.error(err_msg, exc_info=True)
-        await _append_message_to_chat(chat_request, "assistant", f"Critical Error: {err_msg}")
+        # The error message `err_msg` here will be the one from the re-raised exception if it was a ValueError from NLB/HZID lookup,
+        # or a generic one if it's another unexpected error.
+        err_msg = f"An unexpected error in handle_cloud_hosted_deployment for cluster '{cluster_name}': {str(e)}"
+        logger.error(f"An unexpected error in handle_cloud_hosted_deployment for cluster '{cluster_name}': {str(e)}", exc_info=True)
+        await _append_message_to_chat(chat_request, "assistant", f"Critical Error: {str(e)}") # Send the original exception message to chat for more direct info
         return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
     finally:
         if clone_workspace_path and clone_workspace_path.exists():
@@ -1281,7 +1318,11 @@ async def handle_cloud_hosted_scale(
         await _append_message_to_chat(chat_request, "assistant", f"Configuration Error: {str(fnf_err)}")
         return {"status": "error", "message": str(fnf_err), "instance_id": cluster_name}
     except Exception as e:
-        err_msg = f"An unexpected error occurred during cloud-hosted scale for cluster '{cluster_name}', deployment '{deployment_name_to_scale}': {str(e)}"
-        logger.error(err_msg, exc_info=True)
+        err_msg = f"An unexpected error in handle_cloud_local_redeploy for instance '{instance_id}': {str(e)}"
+        logger.error(f"An unexpected error in handle_cloud_local_redeploy for instance '{instance_id}': {str(e)}", exc_info=True)
+        err_msg = f"An unexpected error in handle_cloud_local_scale for instance '{instance_id}': {str(e)}"
+        logger.error(f"An unexpected error in handle_cloud_local_scale for instance '{instance_id}': {str(e)}", exc_info=True)
+        err_msg = f"An unexpected error in handle_cloud_hosted_scale for cluster '{cluster_name}', deployment '{deployment_name_to_scale}': {str(e)}"
+        logger.error(f"An unexpected error in handle_cloud_hosted_scale for cluster '{cluster_name}', deployment '{deployment_name_to_scale}': {str(e)}", exc_info=True)
         await _append_message_to_chat(chat_request, "assistant", f"Critical Error: {err_msg}")
         return {"status": "error", "message": err_msg, "instance_id": cluster_name}
