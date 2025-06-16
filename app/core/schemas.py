@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, IPvAnyAddress
 from typing import List, Optional, Union, Literal, Dict, Any
 
 # Based on OpenAI API documentation for chat completions
@@ -34,9 +34,19 @@ class ChatCompletionRequest(BaseModel):
 
     # --- Custom MCP Server parameters ---
     # Deployment target and mode
-    github_repo_url: Optional[str] = Field(default=None, description="URL of the GitHub repository to deploy. If provided, an action is expected.")
+    github_repo_url: Optional[str] = Field(
+        default=None,
+        description="URL of the GitHub repository to deploy. If provided, an action is expected.",
+        pattern=r"^https://github\.com/[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+(\.git)?$"
+    )
     deployment_mode: Optional[Literal["local", "cloud-local", "cloud-hosted"]] = Field(default="local", description="The desired deployment mode.")
-    target_namespace: Optional[str] = Field(default="default", description="Target Kubernetes namespace for the deployment.")
+    target_namespace: Optional[str] = Field(
+        default="default",
+        description="Target Kubernetes namespace for the deployment.",
+        min_length=1,
+        max_length=63,
+        pattern=r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+    )
 
     # Lifecycle action and parameters
     action: Optional[Literal["deploy", "redeploy", "scale", "decommission"]] = Field(
@@ -49,13 +59,27 @@ class ChatCompletionRequest(BaseModel):
     )
     scale_replicas: Optional[int] = Field(
         default=None,
+        ge=0,
         description="Number of replicas to scale to for the 'scale' action."
     )
 
     # Cloud-specific parameters
     aws_credentials: Optional[AWSCredentials] = Field(default=None, description="AWS credentials, required for cloud-local and cloud-hosted modes.")
-    ec2_key_name: Optional[str] = Field(default=None, description="Name of the EC2 key pair to use for SSH access. Required for cloud-local mode if not set in server defaults.")
-    public_ip: Optional[str] = Field(default=None, description="Public IP of the EC2 instance to manage (e.g. for redeploy, scale actions on an existing cloud-local instance).")
+    instance_name: Optional[str] = Field(
+        default=None,
+        description="User-defined name for the instance being created or managed. This can be used for tagging resources or for display purposes.",
+        min_length=1,
+        max_length=255,
+        pattern=r"^[a-zA-Z0-9]([-a-zA-Z0-9_. ]*[a-zA-Z0-9])?$"
+    )
+    ec2_key_name: Optional[str] = Field(
+        default=None,
+        description="Name of the EC2 key pair to use for SSH access. Required for cloud-local mode if not set in server defaults.",
+        min_length=1,
+        max_length=255,
+        pattern=r"^[a-zA-Z0-9_.-]+$"
+    )
+    public_ip: Optional[IPvAnyAddress] = Field(default=None, description="Public IP of the EC2 instance to manage (e.g. for redeploy, scale actions on an existing cloud-local instance).") # type: ignore
     # instance_size: Optional[str] = Field(default=None, description="EC2 instance size for cloud-local mode. Overrides server default.")
 
     # Cloud-Hosted EKS specific DNS/SSL parameters
@@ -67,7 +91,10 @@ class ChatCompletionRequest(BaseModel):
     app_subdomain_label: Optional[str] = Field(
         default=None,
         title="Application Subdomain Label",
-        description="The label for the application's subdomain (e.g., 'myapp'). If provided, the full app domain will be 'myapp.your_base_domain.com'. If not provided, a name might be derived from the repository name. Used for cloud-hosted EKS deployments with custom domain/SSL."
+        description="The label for the application's subdomain (e.g., 'myapp'). If provided, the full app domain will be 'myapp.your_base_domain.com'. If not provided, a name might be derived from the repository name. Used for cloud-hosted EKS deployments with custom domain/SSL.",
+        min_length=1,
+        max_length=63,
+        pattern=r"^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$"
     )
 
     # Application configuration (example, can be expanded)
