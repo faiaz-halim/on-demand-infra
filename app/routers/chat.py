@@ -44,7 +44,7 @@ if settings.AZURE_OPENAI_API_KEY and settings.AZURE_OPENAI_ENDPOINT and settings
         api_version=settings.AZURE_OPENAI_API_VERSION,
     )
 
-MCP_SYSTEM_PROMPT = """You are an expert AI assistant for the Meta-Code Platform (MCP). Your goal is to help users automate infrastructure deployment and application setup.
+MCP_SYSTEM_PROMPT = """You are an expert AI assistant for the Model Context Protocol (MCP). Your goal is to help users automate infrastructure deployment and application setup.
 You have access to several tools to assist you. When a user asks a question or requests an operation that could benefit from up-to-date information, technical documentation, best practices, or troubleshooting for specific errors, consider using the 'web_search' tool.
 For example, if asked about "best practices for securing an S3 bucket with Terraform," or "how to resolve 'XYZ error' with Kubernetes," you should use the web_search tool to gather relevant information before formulating your response or plan.
 When you use a tool, you will receive its output. Use this output to provide a comprehensive and accurate answer to the user.
