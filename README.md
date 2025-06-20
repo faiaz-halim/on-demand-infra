@@ -1,4 +1,4 @@
-# MCP (Meta-Code Platform) Server
+# MCP (Model Context Protocol) Server
 
 The MCP Server is a FastAPI application that provides an OpenAI-compatible API to automate infrastructure deployment and application setup across different environments.
 

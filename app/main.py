@@ -10,7 +10,7 @@ from app.tools.search_tools import web_search, WEB_SEARCH_TOOL_SCHEMA
 app = FastAPI(
     title="MCP Server",
     version="0.1.0",
-    description="Meta-Code Platform Server for automated infrastructure deployment."
+    description="Model Context Protocol Server for automated infrastructure deployment."
 )
 
 @app.on_event("startup")
