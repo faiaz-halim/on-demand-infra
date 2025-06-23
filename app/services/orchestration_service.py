@@ -555,7 +555,7 @@ async def handle_cloud_hosted_deployment(
         # For this subtask, focusing on error message text. If clone_repository raises an exception, it's caught below.
         # If it returns a dict (older behavior), this check handles it.
         if isinstance(cloned_repo_details, dict) and not cloned_repo_details.get("success"): # Check for old dict error format
-            err_msg = f"Failed to clone repository {repo_url} locally on the MCP server: {cloned_repo_details.get('error', 'Unknown error')}. Please check the repository URL and network access."
+            err_msg = f"Failed to clone repository {repo_url} locally on the server: {cloned_repo_details.get('error', 'Unknown error')}. Please check the repository URL and network access."
             logger.error(err_msg)
             await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
             return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
@@ -599,7 +599,7 @@ async def handle_cloud_hosted_deployment(
 
         if not build_result.get("success"):
             log_snippet = build_logs[-500:] if build_logs else "No logs available."
-            err_msg = f"Failed to build Docker image {local_image_tag} locally on the MCP server: {build_result.get('error', 'Unknown build error')}. Log snippet: {log_snippet}"
+            err_msg = f"Failed to build Docker image {local_image_tag} locally on the server: {build_result.get('error', 'Unknown build error')}. Log snippet: {log_snippet}"
             logger.error(err_msg)
             await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
             return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
@@ -615,7 +615,7 @@ async def handle_cloud_hosted_deployment(
             aws_creds.aws_secret_access_key.get_secret_value()
         )
         if not login_details:
-            err_msg = "Failed to get AWS ECR login credentials. Please check the provided AWS credentials and MCP server permissions."
+            err_msg = "Failed to get AWS ECR login credentials. Please check the provided AWS credentials and server permissions."
             logger.error(err_msg)
             await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
             return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
@@ -638,7 +638,7 @@ async def handle_cloud_hosted_deployment(
             ecr_password
         )
         if not login_ok:
-            err_msg = "AWS ECR login failed. Please check the provided AWS credentials and MCP server permissions for ECR access."
+            err_msg = "AWS ECR login failed. Please check the provided AWS credentials and server permissions for ECR access."
             logger.error(err_msg)
             await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
             return {"status": "error", "mode": "cloud-hosted", "message": err_msg, "instance_id": cluster_name}
@@ -1120,10 +1120,12 @@ async def handle_cloud_hosted_redeploy(
     repo_url: str,
     namespace: str,
     aws_creds: AWSCredentials,
-    chat_request: ChatCompletionRequest
+    chat_request: ChatCompletionRequest,
+    branch: Optional[str] = None
 ) -> Dict[str, Any]:
-    logger.info(f"Handling cloud-hosted redeploy for EKS cluster '{cluster_name}', repo '{repo_url}', namespace '{namespace}'.")
-    await _append_message_to_chat(chat_request, "assistant", f"Starting redeploy process for application in EKS cluster '{cluster_name}' using repository '{repo_url}'...")
+    logger.info(f"Handling cloud-hosted redeploy for EKS cluster '{cluster_name}', repo '{repo_url}', namespace '{namespace}', branch '{branch}'.")
+    branch_msg = f" on branch '{branch}'" if branch else ""
+    await _append_message_to_chat(chat_request, "assistant", f"Starting redeploy process for application in EKS cluster '{cluster_name}' using repository '{repo_url}'{branch_msg}...")
 
     workspace_dir_path = pathlib.Path(settings.PERSISTENT_WORKSPACE_BASE_DIR) / "cloud-hosted" / cluster_name
     kubeconfig_file_path = workspace_dir_path / f"kubeconfig_{cluster_name}.yaml"
@@ -1162,8 +1164,13 @@ async def handle_cloud_hosted_redeploy(
     clone_workspace_path = pathlib.Path(tempfile.mkdtemp(prefix="mcp_redeploy_clone_"))
     pushed_image_uri_redeploy = None
     try:
-        await _append_message_to_chat(chat_request, "assistant", f"Cloning repository {repo_url} locally...")
-        cloned_repo_details = await asyncio.to_thread(git_service.clone_repository, repo_url, str(clone_workspace_path))
+        await _append_message_to_chat(chat_request, "assistant", f"Cloning repository {repo_url}{' on branch '+branch if branch else ''} locally...")
+        cloned_repo_details = await asyncio.to_thread(
+            git_service.clone_repository,
+            repo_url,
+            str(clone_workspace_path),
+            branch=branch
+        )
         if not cloned_repo_details or not cloned_repo_details.get("success"):
             raise Exception(f"Git clone failed: {cloned_repo_details.get('error', 'Unknown error')}")
 
@@ -1234,7 +1241,22 @@ async def handle_cloud_hosted_redeploy(
         err_msg = f"Error updating Kubernetes deployment: {error_detail}"
         logger.error(f"kubectl set image failed for {app_name}: {error_detail}")
         await _append_message_to_chat(chat_request, "assistant", err_msg)
-        return {"status": "error", "mode": "cloud-hosted", "action": "redeploy", "instance_id": cluster_name, "message": f"kubectl set image failed: {error_detail}"}
+
+        # Rollback mechanism
+        await _append_message_to_chat(chat_request, "assistant", "Attempting rollback to previous deployment version...")
+        rollback_cmd = ["rollout", "undo", f"deployment/{app_name}", "--namespace", namespace]
+        rollback_result = await asyncio.to_thread(k8s_service._run_kubectl_command, rollback_cmd, str(kubeconfig_file_path))
+
+        if rollback_result.returncode == 0:
+            rollback_msg = f"Rollback successful for {app_name} in namespace {namespace}"
+            logger.info(rollback_msg)
+            await _append_message_to_chat(chat_request, "assistant", rollback_msg)
+            return {"status": "rollback_success", "mode": "cloud-hosted", "action": "redeploy", "instance_id": cluster_name, "message": f"Redeployment failed but rollback successful: {error_detail}"}
+        else:
+            rollback_err = f"Rollback failed: {rollback_result.stderr or rollback_result.stdout}"
+            logger.error(rollback_err)
+            await _append_message_to_chat(chat_request, "assistant", f"Critical Error: {rollback_err}")
+            return {"status": "error", "mode": "cloud-hosted", "action": "redeploy", "instance_id": cluster_name, "message": f"Redeployment and rollback failed: {error_detail} | Rollback: {rollback_err}"}
 
     final_success_message = f"Application '{app_name}' in EKS cluster '{cluster_name}' successfully redeployed with image '{pushed_image_uri_redeploy}'. It may take a few moments for the changes to roll out."
     await _append_message_to_chat(chat_request, "assistant", final_success_message)
@@ -1252,14 +1274,18 @@ async def handle_cloud_hosted_redeploy(
 
 async def handle_cloud_hosted_scale(
     cluster_name: str,
-    deployment_name_to_scale: Optional[str], # From chat_request.instance_name
+    deployment_name_to_scale: Optional[str],
     namespace: str,
     replicas: int,
-    aws_creds: AWSCredentials, # Not directly used for kubectl, but good for consistency / future auth needs
-    chat_request: ChatCompletionRequest
+    aws_creds: AWSCredentials,
+    chat_request: ChatCompletionRequest,
+    enable_autoscaling: bool = False,
+    max_replicas: int = 10,
+    cpu_threshold: int = 80
 ) -> Dict[str, Any]:
-    logger.info(f"Cloud-hosted scale: EKS Cluster '{cluster_name}', K8s Deployment '{deployment_name_to_scale or 'Not specified - will fail if None'}' in Namespace '{namespace}' to {replicas} replicas.")
-    await _append_message_to_chat(chat_request, "assistant", f"Initiating scaling for deployment '{deployment_name_to_scale or '[Unknown Deployment]'}' in EKS cluster '{cluster_name}', namespace '{namespace}' to {replicas} replicas.")
+    logger.info(f"Cloud-hosted scale: EKS Cluster '{cluster_name}', Deployment '{deployment_name_to_scale}', Namespace '{namespace}', Replicas: {replicas}, Autoscaling: {enable_autoscaling}")
+    scaling_type = "autoscaling" if enable_autoscaling else f"manual scaling to {replicas} replicas"
+    await _append_message_to_chat(chat_request, "assistant", f"Initiating {scaling_type} for deployment '{deployment_name_to_scale}' in EKS cluster '{cluster_name}'...")
 
     try:
         if not deployment_name_to_scale:
@@ -1299,13 +1325,45 @@ async def handle_cloud_hosted_scale(
             success_message = f"Deployment '{deployment_name_to_scale}' in namespace '{namespace}' (EKS cluster '{cluster_name}') successfully scaled to {replicas} replicas."
             logger.info(success_message)
             await _append_message_to_chat(chat_request, "assistant", success_message)
+
+            # Autoscaling implementation
+            if enable_autoscaling:
+                await _append_message_to_chat(chat_request, "assistant", f"Configuring autoscaling for deployment '{deployment_name_to_scale}' (max: {max_replicas}, CPU: {cpu_threshold}%)...")
+                hpa_manifest = manifest_service.generate_hpa_manifest(
+                    deployment_name_to_scale,
+                    namespace,
+                    min_replicas=replicas,
+                    max_replicas=max_replicas,
+                    cpu_threshold=cpu_threshold
+                )
+
+                hpa_file_path = workspace_dir_path / f"{deployment_name_to_scale}_hpa.yaml"
+                with open(hpa_file_path, "w") as f:
+                    f.write(hpa_manifest)
+
+                apply_hpa_result = await asyncio.to_thread(
+                    k8s_service._run_kubectl_command,
+                    ["apply", "-f", str(hpa_file_path)],
+                    str(kubeconfig_file_path)
+                )
+
+                if apply_hpa_result.returncode == 0:
+                    hpa_success = f"Autoscaling configured for {deployment_name_to_scale} (max {max_replicas} replicas at {cpu_threshold}% CPU)"
+                    await _append_message_to_chat(chat_request, "assistant", hpa_success)
+                    success_message += f"\n{hpa_success}"
+                else:
+                    hpa_error = f"Autoscaling setup failed: {apply_hpa_result.stderr or apply_hpa_result.stdout}"
+                    await _append_message_to_chat(chat_request, "assistant", hpa_error)
+                    success_message += f"\n{hpa_error}"
+
             return {
                 "status": "success",
                 "message": success_message,
-                "instance_id": cluster_name, # This is the EKS cluster name
+                "instance_id": cluster_name,
                 "deployment_name": deployment_name_to_scale,
                 "namespace": namespace,
-                "scaled_replicas": replicas
+                "scaled_replicas": replicas,
+                "autoscaling_enabled": enable_autoscaling
             }
         else:
             err_msg = f"Failed to scale deployment '{deployment_name_to_scale}'. Error: {scale_result.stderr or scale_result.stdout}"

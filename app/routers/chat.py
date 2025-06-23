@@ -1,6 +1,6 @@
-from fastapi import APIRouter, HTTPException, Body, Depends
+from fastapi import APIRouter, HTTPException, Request, Body, Depends
 from fastapi.responses import StreamingResponse, JSONResponse
-from typing import AsyncGenerator, List, Dict, Any
+from typing import AsyncGenerator, List, Dict, Any, Optional
 import time
 import uuid
 import json
@@ -9,7 +9,7 @@ import asyncio
 from app.core.schemas import (
     ChatCompletionRequest, ChatCompletionResponse, ChatMessage, Choice, Usage,
     ChatCompletionStreamResponse, ChatCompletionStreamChoice, ChoiceDelta,
-    AWSCredentials
+    AWSCredentials, Model, ModelList
 )
 from app.core.config import settings
 from app.core.logging_config import get_logger
@@ -24,7 +24,7 @@ from app.services.orchestration_service import (
     handle_cloud_local_redeploy,
     handle_cloud_local_scale,
     handle_cloud_hosted_decommission,
-    handle_cloud_hosted_redeploy, # Added for cloud-hosted redeploy
+    handle_cloud_hosted_redeploy,
     handle_cloud_hosted_scale
 )
 from app.services.tool_service import TOOL_DEFINITIONS, execute_tool
@@ -32,8 +32,8 @@ from app.services.tool_service import TOOL_DEFINITIONS, execute_tool
 logger = get_logger(__name__)
 
 router = APIRouter(
-    prefix="/v1/chat",
-    tags=["Chat Completions (OpenAI Compatible)"]
+    prefix="/v1",
+    tags=["OpenAI Compatible API"]
 )
 
 client = None
@@ -51,7 +51,16 @@ When you use a tool, you will receive its output. Use this output to provide a c
 If a user requests a deployment, guide them through the process, leveraging your knowledge and any information gathered from tools if needed for planning the deployment steps or generating configurations.
 """
 
-@router.post("/completions", response_model=None)
+@router.get("/models")
+async def list_models() -> ModelList:
+    """Return a list of available models (OpenAI compatible endpoint)"""
+    models = [
+        Model(id=settings.AZURE_OPENAI_DEPLOYMENT, object="model", created=int(time.time()), owned_by="azure-openai"),
+        Model(id="mcp-server", object="model", created=int(time.time()), owned_by="mcp")
+    ]
+    return ModelList(data=models)
+
+@router.post("/chat/completions", response_model=None)
 async def create_chat_completion(request: ChatCompletionRequest = Body(...)) -> Any:
     request_id = f"chatcmpl-{uuid.uuid4()}"
     created_timestamp = int(time.time())
@@ -62,7 +71,7 @@ async def create_chat_completion(request: ChatCompletionRequest = Body(...)) -> 
     if request.action == "deploy":
         if not request.github_repo_url:
             raise HTTPException(status_code=400, detail="GitHub repository URL ('github_repo_url') is required for 'deploy' action.")
-        if not request.target_namespace: # Should have default
+        if not request.target_namespace:
             raise HTTPException(status_code=400, detail="Target namespace ('target_namespace') is required for 'deploy' action.")
 
         logger.info(f"Deployment action for {request.github_repo_url} with mode: {request.deployment_mode} in namespace {request.target_namespace}, Instance Name: {request.instance_name}")
@@ -72,11 +81,11 @@ async def create_chat_completion(request: ChatCompletionRequest = Body(...)) -> 
                 response_data = await handle_local_deployment(request.github_repo_url, request.target_namespace, request)
             elif request.deployment_mode == "cloud-local":
                 if not request.aws_credentials:
-                    raise HTTPException(status_code=400, detail="AWS credentials ('aws_credentials') are required for cloud-local deployment mode.")
+                    raise HTTPException(status_code=400, detail="AWS credentials ('aws_credentials') are required for cloud-local deployment.")
                 response_data = await handle_cloud_local_deployment(request.github_repo_url, request.target_namespace, request.aws_credentials, request)
             elif request.deployment_mode == "cloud-hosted":
                 if not request.aws_credentials:
-                    raise HTTPException(status_code=400, detail="AWS credentials ('aws_credentials') are required for cloud-hosted deployment mode.")
+                    raise HTTPException(status_code=400, detail="AWS credentials ('aws_credentials') are required for cloud-hosted deployment.")
                 response_data = await handle_cloud_hosted_deployment(request.github_repo_url, request.target_namespace, request.aws_credentials, request)
             else:
                 raise HTTPException(status_code=400, detail=f"Invalid deployment mode for deploy action: {request.deployment_mode}")
@@ -84,8 +93,14 @@ async def create_chat_completion(request: ChatCompletionRequest = Body(...)) -> 
         except HTTPException as http_exc:
             raise http_exc
         except Exception as e:
-            logger.error(f"Error during 'deploy' action for Request ID {request_id}: {str(e)}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Error during 'deploy' action: {str(e)}")
+            logger.error(f"Deployment failed for Request ID {request_id}: {str(e)}", exc_info=True)
+            error_detail = {
+                "error": "DeploymentError",
+                "message": "An unexpected error occurred during deployment",
+                "details": str(e),
+                "request_id": request_id
+            }
+            raise HTTPException(status_code=500, detail=error_detail)
 
     elif request.action == "decommission":
         if not request.instance_id:
@@ -103,7 +118,7 @@ async def create_chat_completion(request: ChatCompletionRequest = Body(...)) -> 
                     raise HTTPException(status_code=400, detail="AWS credentials are required for cloud-hosted decommission action.")
                 logger.info(f"Cloud-hosted decommission requested for EKS cluster (instance_id): {request.instance_id}")
                 response_data = await handle_cloud_hosted_decommission(
-                    cluster_name=request.instance_id, # instance_id is the cluster_name for cloud-hosted
+                    cluster_name=request.instance_id,
                     aws_creds=request.aws_credentials,
                     chat_request=request
                 )
@@ -113,8 +128,15 @@ async def create_chat_completion(request: ChatCompletionRequest = Body(...)) -> 
         except HTTPException as http_exc:
             raise http_exc
         except Exception as e:
-            logger.error(f"Error during 'decommission' action for Request ID {request_id}, Instance ID {request.instance_id}: {str(e)}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Error during 'decommission' action: {str(e)}")
+            logger.error(f"Decommission failed for Request ID {request_id}, Instance ID {request.instance_id}: {str(e)}", exc_info=True)
+            error_detail = {
+                "error": "DecommissionError",
+                "message": "An unexpected error occurred during decommission",
+                "details": str(e),
+                "request_id": request_id,
+                "instance_id": request.instance_id
+            }
+            raise HTTPException(status_code=500, detail=error_detail)
 
     elif request.action == "redeploy":
         if request.deployment_mode == "cloud-local":
@@ -123,7 +145,7 @@ async def create_chat_completion(request: ChatCompletionRequest = Body(...)) -> 
             if not request.public_ip:
                 raise HTTPException(status_code=400, detail="Public IP ('public_ip') is required for 'redeploy' action on cloud-local instance.")
             if not request.ec2_key_name:
-                 raise HTTPException(status_code=400, detail="EC2 key name ('ec2_key_name') is required for 'redeploy' action on cloud-local instance.")
+                raise HTTPException(status_code=400, detail="EC2 key name ('ec2_key_name') is required for 'redeploy' action on cloud-local instance.")
             if not request.github_repo_url:
                 raise HTTPException(status_code=400, detail="GitHub repository URL ('github_repo_url') for the new version is required for 'redeploy' action.")
             if not request.target_namespace:
@@ -145,14 +167,21 @@ async def create_chat_completion(request: ChatCompletionRequest = Body(...)) -> 
             except HTTPException as http_exc:
                 raise http_exc
             except Exception as e:
-                logger.error(f"Error during 'redeploy' (cloud-local) for Request ID {request_id}, Instance ID {request.instance_id}: {str(e)}", exc_info=True)
-                raise HTTPException(status_code=500, detail=f"Error during 'redeploy' (cloud-local) action: {str(e)}")
+                logger.error(f"Redeploy failed for Request ID {request_id}, Instance ID {request.instance_id}: {str(e)}", exc_info=True)
+                error_detail = {
+                    "error": "RedeployError",
+                    "message": "An unexpected error occurred during redeployment",
+                    "details": str(e),
+                    "request_id": request_id,
+                    "instance_id": request.instance_id
+                }
+                raise HTTPException(status_code=500, detail=error_detail)
         elif request.deployment_mode == "cloud-hosted":
-            if not request.instance_id: # This is the cluster_name
+            if not request.instance_id:
                 raise HTTPException(status_code=400, detail="Instance ID (EKS cluster name) is required for cloud-hosted redeploy.")
             if not request.github_repo_url:
                 raise HTTPException(status_code=400, detail="GitHub repository URL is required for redeploy.")
-            if not request.target_namespace: # Assuming namespace is always needed
+            if not request.target_namespace:
                 raise HTTPException(status_code=400, detail="Target namespace is required for redeploy.")
             if not request.aws_credentials:
                 raise HTTPException(status_code=400, detail="AWS credentials are required for cloud-hosted redeploy.")
@@ -172,9 +201,15 @@ async def create_chat_completion(request: ChatCompletionRequest = Body(...)) -> 
                 raise http_exc
             except Exception as e:
                 logger.error(f"Error during 'redeploy' (cloud-hosted) for Request ID {request_id}, Cluster {request.instance_id}: {str(e)}", exc_info=True)
-                raise HTTPException(status_code=500, detail=f"Error during 'redeploy' (cloud-hosted) action: {str(e)}")
+                error_detail = {
+                    "error": "RedeployError",
+                    "message": "An unexpected error occurred during redeployment",
+                    "details": str(e),
+                    "request_id": request_id,
+                    "instance_id": request.instance_id
+                }
+                raise HTTPException(status_code=500, detail=error_detail)
         else:
-            # Fallback for other deployment modes under redeploy
             raise HTTPException(status_code=501, detail=f"Redeploy not implemented for {request.deployment_mode}")
 
     elif request.action == "scale":
@@ -184,7 +219,7 @@ async def create_chat_completion(request: ChatCompletionRequest = Body(...)) -> 
             if not request.public_ip:
                 raise HTTPException(status_code=400, detail="Public IP ('public_ip') is required for 'scale' action on cloud-local instance.")
             if not request.ec2_key_name:
-                 raise HTTPException(status_code=400, detail="EC2 key name ('ec2_key_name') is required for 'scale' action on cloud-local instance.")
+                raise HTTPException(status_code=400, detail="EC2 key name ('ec2_key_name') is required for 'scale' action on cloud-local instance.")
             if not request.target_namespace:
                 raise HTTPException(status_code=400, detail="Target Kubernetes namespace ('target_namespace') is required for 'scale' action.")
             if request.scale_replicas is None or not isinstance(request.scale_replicas, int) or request.scale_replicas < 0:
@@ -193,7 +228,6 @@ async def create_chat_completion(request: ChatCompletionRequest = Body(...)) -> 
             logger.info(f"Scale action requested for instance: {request.instance_id} (Instance Name: {request.instance_name}, IP: {request.public_ip}) to {request.scale_replicas} replicas in namespace {request.target_namespace}")
             response_data: Dict[str, Any] = {}
             try:
-                # AWS creds might be optional for pure SSH/kubectl scale, but good to pass if available
                 if not request.aws_credentials:
                     logger.warning("AWS credentials not provided for cloud-local scale, proceeding but some operations might fail if they require AWS API access.")
 
@@ -207,10 +241,17 @@ async def create_chat_completion(request: ChatCompletionRequest = Body(...)) -> 
             except HTTPException as http_exc:
                 raise http_exc
             except Exception as e:
-                logger.error(f"Error during 'scale' action for Request ID {request_id}, Instance ID {request.instance_id}: {str(e)}", exc_info=True)
-                raise HTTPException(status_code=500, detail=f"Error during 'scale' action: {str(e)}")
+                logger.error(f"Scale failed for Request ID {request_id}, Instance ID {request.instance_id}: {str(e)}", exc_info=True)
+                error_detail = {
+                    "error": "ScaleError",
+                    "message": "An unexpected error occurred during scaling",
+                    "details": str(e),
+                    "request_id": request_id,
+                    "instance_id": request.instance_id
+                }
+                raise HTTPException(status_code=500, detail=error_detail)
         elif request.deployment_mode == "cloud-hosted":
-            if not request.instance_id: # EKS cluster name
+            if not request.instance_id:
                 raise HTTPException(status_code=400, detail="Instance ID (EKS cluster name) is required for 'scale' action in cloud-hosted mode.")
             if not request.target_namespace:
                 raise HTTPException(status_code=400, detail="Target Kubernetes namespace ('target_namespace') is required for 'scale' action in cloud-hosted mode.")
@@ -218,17 +259,15 @@ async def create_chat_completion(request: ChatCompletionRequest = Body(...)) -> 
                 raise HTTPException(status_code=400, detail="A valid, non-negative integer for 'scale_replicas' is required for 'scale' action.")
             if not request.aws_credentials:
                 raise HTTPException(status_code=400, detail="AWS credentials ('aws_credentials') are required for 'scale' action in cloud-hosted mode.")
-            # instance_name might be used to identify the K8s deployment name
             if not request.instance_name:
-                 logger.warning("Request 'instance_name' (expected to be K8s deployment name) not provided for cloud-hosted scale. The handler will attempt to derive it or use a default if possible.")
-
+                logger.warning("Request 'instance_name' (expected to be K8s deployment name) not provided for cloud-hosted scale. The handler will attempt to derive it or use a default if possible.")
 
             logger.info(f"Cloud-hosted scale action requested for EKS cluster: {request.instance_id}, K8s Deployment: {request.instance_name or 'Not specified'}, Namespace: {request.target_namespace}, Replicas: {request.scale_replicas}")
             response_data: Dict[str, Any] = {}
             try:
                 response_data = await handle_cloud_hosted_scale(
                     cluster_name=request.instance_id,
-                    deployment_name_to_scale=request.instance_name, # This might be None
+                    deployment_name_to_scale=request.instance_name,
                     namespace=request.target_namespace,
                     replicas=request.scale_replicas,
                     aws_creds=request.aws_credentials,
@@ -239,7 +278,14 @@ async def create_chat_completion(request: ChatCompletionRequest = Body(...)) -> 
                 raise http_exc
             except Exception as e:
                 logger.error(f"Error during 'scale' (cloud-hosted) for Request ID {request_id}, Cluster {request.instance_id}: {str(e)}", exc_info=True)
-                raise HTTPException(status_code=500, detail=f"Error during 'scale' (cloud-hosted) action: {str(e)}")
+                error_detail = {
+                    "error": "ScaleError",
+                    "message": "An unexpected error occurred during scaling",
+                    "details": str(e),
+                    "request_id": request_id,
+                    "instance_id": request.instance_id
+                }
+                raise HTTPException(status_code=500, detail=error_detail)
         else:
             raise HTTPException(status_code=501, detail=f"Scale action for mode '{request.deployment_mode}' is not yet implemented.")
 

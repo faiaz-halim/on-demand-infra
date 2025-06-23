@@ -1,47 +1,110 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
+from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from app.routers import chat
-from app.core.logging_config import logger as app_logger # Use the main logger
-from app.core.config import settings # To log settings at startup if desired
+from app.core.config import settings
+from app.core.logging_config import setup_logging, get_logger
+import logging
+import traceback
 
-# Tool registration imports
-from app.services.tool_service import register_tool
-from app.tools.search_tools import web_search, WEB_SEARCH_TOOL_SCHEMA
+setup_logging()
+logger = get_logger(__name__)
 
 app = FastAPI(
-    title="MCP Server",
+    title=settings.PROJECT_NAME,
     version="0.1.0",
-    description="Model Context Protocol Server for automated infrastructure deployment."
+    docs_url="/docs",
+    redoc_url="/redoc"
 )
 
-@app.on_event("startup")
-async def startup_event():
-    app_logger.info(f"MCP Server starting up. Log level: {settings.LOG_LEVEL}")
-    if not settings.AZURE_OPENAI_API_KEY or not settings.AZURE_OPENAI_ENDPOINT:
-        app_logger.warning("Azure OpenAI API Key or Endpoint is not configured.")
-    else:
-        app_logger.info("Azure OpenAI client configured.")
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
-    # Register tools
-    app_logger.info("Registering tools...")
-    try:
-        register_tool("web_search", web_search, WEB_SEARCH_TOOL_SCHEMA)
-        app_logger.info("Tools registered successfully.")
-    except Exception as e:
-        app_logger.exception(f"An error occurred during tool registration: {e}")
+# Initialize rate limiter
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# Security headers middleware
+@app.middleware("http")
+@limiter.limit("100/minute")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    # Add security headers
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Content-Security-Policy"] = "default-src 'self'"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=()"
+    return response
 
-@app.get("/health", tags=["General"])
+# CORS configuration
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Force HTTPS in production
+if settings.ENVIRONMENT == "production":
+    app.add_middleware(HTTPSRedirectMiddleware)
+
+app.include_router(chat.router, prefix="/api/v1", tags=["chat"])
+
+@app.get("/health")
 async def health_check():
-    """Perform a health check."""
-    app_logger.debug("Health check endpoint called.")
-    return {"status": "ok", "message": "MCP Server is healthy"}
+    return {"status": "ok", "version": app.version}
 
-app.include_router(chat.router)
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Global exception handler for uncaught exceptions"""
+    logger.error(f"Unhandled exception: {str(exc)}\n{traceback.format_exc()}")
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "error": "Internal server error",
+            "message": "An unexpected error occurred. Please try again later.",
+            "details": str(exc),
+            "request_id": request.state.request_id if hasattr(request.state, "request_id") else None
+        }
+    )
 
-if __name__ == "__main__":
-    import uvicorn
-    # Note: Tool registration via @app.on_event("startup") works with `uvicorn app.main:app`.
-    # If running this file directly (`python app/main.py`), Uvicorn might not pick up lifespan events
-    # unless configured to do so or if the app instance is passed in a specific way.
-    # The standard way to run FastAPI with Uvicorn (`uvicorn app.main:app ...`) handles lifespan events.
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Handler for HTTP exceptions"""
+    logger.warning(f"HTTP error {exc.status_code}: {exc.detail}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": exc.detail,
+            "message": exc.detail,
+            "request_id": request.state.request_id if hasattr(request.state, "request_id") else None
+        }
+    )
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Handler for request validation errors"""
+    logger.warning(f"Validation error: {exc.errors()}")
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={
+            "error": "Validation error",
+            "message": "Invalid request parameters",
+            "details": exc.errors(),
+            "request_id": request.state.request_id if hasattr(request.state, "request_id") else None
+        }
+    )
+
+@app.middleware("http")
+async def add_request_id(request: Request, call_next):
+    """Middleware to add request ID for tracing"""
+    request.state.request_id = request.headers.get("X-Request-ID", "none")
+    response = await call_next(request)
+    return response

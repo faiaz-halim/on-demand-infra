@@ -1,6 +1,6 @@
 {
   "meta": {
-    "projectName": "MCP Server (Meta-Code Platform)",
+    "projectName": "On-Demand Infrastructure Provision",
     "version": "0.1.0",
     "prdSource": "prd.txt",
     "createdAt": "2024-06-01T12:00:00Z",
@@ -10,7 +10,7 @@
     {
       "id": 1,
       "title": "Phase 1: Setup Core Project Infrastructure, API, and Foundational Services",
-      "description": "Initialize the MCP server project, set up basic configurations, implement the OpenAI compatible API endpoint, integrate Azure OpenAI, and set up essential services like logging and GitHub interaction.",
+      "description": "Initialize the application project, set up basic configurations, implement the OpenAI compatible API endpoint, integrate Azure OpenAI, and set up essential services like logging and GitHub interaction.",
       "status": "done",
       "updatedAt": "2024-06-01T13:35:00Z",
       "subtasks": [
@@ -204,28 +204,28 @@
       "title": "Phase 2: Tool Call Integration for Contextualization",
       "description": "Implement the framework for making tool calls to external services (e.g., Context7 MCP, web search) to fetch documentation and best practices.",
       "status": "done",
-      "updatedAt": "2024-06-01T15:20:00Z",
+      "updatedAt": "2025-06-23T17:00:00Z",
       "subtasks": [
         {
           "id": "7.1",
           "title": "Develop Tool Call Framework",
-          "description": "Create a generic framework within the MCP server to manage requests and responses for different external tools.",
+          "description": "Create a generic framework within the application to manage requests and responses for different external tools.",
           "status": "done",
-          "updatedAt": "2024-06-01T15:20:00Z"
+          "updatedAt": "2025-06-23T17:00:00Z"
         },
         {
           "id": "7.2",
           "title": "Implement Web Search Tool Integration",
           "description": "Integrate with a web search API (e.g., Google Search API, Bing Search API, or a library that wraps one) to fetch information.",
           "status": "done",
-          "updatedAt": "2024-06-01T15:20:00Z"
+          "updatedAt": "2025-06-23T17:00:00Z"
         },
         {
           "id": "7.3",
           "title": "Develop Prompts for Documentation/Best Practice Search",
           "description": "Create effective prompts to be used with the AI model (Azure OpenAI) to formulate queries for the tool calls based on the current context (e.g., user request, resource being generated).",
           "status": "done",
-          "updatedAt": "2024-06-01T15:20:00Z"
+          "updatedAt": "2025-06-23T17:00:00Z"
         }
       ]
     },
@@ -356,22 +356,22 @@
       "id": 12,
       "title": "Phase 3: Lifecycle Management (Cloud-Hosted)",
       "description": "Implement application redeployment, scaling, and decommissioning for the 'cloud-hosted' EKS environment.",
-      "status": "pending",
+      "status": "done",
       "subtasks": [
         {
           "id": "12.1",
           "title": "Implement Redeployment for Cloud-Hosted (EKS)",
-          "status": "pending"
+          "status": "done"
         },
         {
           "id": "12.2",
           "title": "Implement Scaling for Cloud-Hosted (EKS)",
-          "status": "pending"
+          "status": "done"
         },
         {
           "id": "12.3",
           "title": "Implement Decommissioning for Cloud-Hosted (EKS)",
-          "status": "pending"
+          "status": "done"
         }
       ]
     },
@@ -379,22 +379,25 @@
       "id": 13,
       "title": "Phase 4: Polish, Testing & External Integration",
       "description": "Focus on refining the system, comprehensive testing, security hardening, documentation, and ensuring smooth integration with external tools like Open WebUI.",
-      "status": "pending",
+      "status": "in-progress",
       "subtasks": [
         {
           "id": "13.1",
           "title": "Advanced API Compatibility & Frontend Testing (Open WebUI)",
-          "status": "pending"
+          "status": "done",
+          "updatedAt": "2025-06-23T17:30:00Z"
         },
         {
           "id": "13.2",
           "title": "Comprehensive Security Review and Hardening",
-          "status": "pending"
+          "status": "done",
+          "updatedAt": "2025-06-23T17:33:00Z"
         },
         {
           "id": "13.3",
           "title": "Robust Error Handling & User Feedback Enhancement",
-          "status": "pending"
+          "status": "done",
+          "updatedAt": "2025-06-23T17:39:00Z"
         },
         {
           "id": "13.4",
@@ -406,7 +409,8 @@
           "title": "Extensive End-to-End Testing",
           "status": "pending"
         }
-      ]
+      ],
+      "updatedAt": "2025-06-23T17:32:00Z"
     }
   ]
 }

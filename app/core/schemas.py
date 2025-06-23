@@ -32,7 +32,6 @@ class ChatCompletionRequest(BaseModel):
     logit_bias: Optional[Dict[str, float]] = None
     user: Optional[str] = None
 
-    # --- Custom MCP Server parameters ---
     # Deployment target and mode
     github_repo_url: Optional[str] = Field(
         default=None,

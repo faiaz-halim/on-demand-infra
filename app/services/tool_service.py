@@ -77,6 +77,66 @@ async def execute_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, A
         logger.exception(f"Error executing tool '{tool_name}' with arguments {arguments}: {e}")
         return {"status": "error", "error_message": str(e)}
 
+async def get_tool_response(tool_name: str, query: str, context: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Executes a tool call to external services (Context7 MCP or web search)
+    to fetch documentation and best practices.
+
+    Args:
+        tool_name: 'context7_search' or 'web_search'
+        query: Search query string
+        context: Additional context for the search
+
+    Returns:
+        Dictionary with search results
+    """
+    # Placeholder implementation - integrate with actual APIs
+    logger.info(f"Executing tool: {tool_name} with query: '{query}'")
+
+    # Simulate API call delay
+    await asyncio.sleep(1)
+
+    return {
+        "tool_name": tool_name,
+        "results": [
+            {
+                "source": "https://docs.aws.amazon.com",
+                "content_snippet": f"Best practices for {query} from AWS documentation"
+            },
+            {
+                "source": "https://registry.terraform.io",
+                "content_snippet": f"Terraform documentation for {query}"
+            }
+        ]
+    }
+
+# Register the tool call function
+get_tool_response_schema = {
+    "name": "get_tool_response",
+    "description": "Search for information using Context7 MCP or web search",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "tool_name": {
+                "type": "string",
+                "enum": ["context7_search", "web_search"],
+                "description": "The tool to use for search"
+            },
+            "query": {
+                "type": "string",
+                "description": "Search query string"
+            },
+            "context": {
+                "type": "string",
+                "description": "Additional context for the search"
+            }
+        },
+        "required": ["tool_name", "query"]
+    }
+}
+
+register_tool("get_tool_response", get_tool_response, get_tool_response_schema)
+
 # Example (for potential direct testing or later use):
 # async def example_tool_function(location: str, unit: str = "celsius"):
 # """Example tool to get current weather."""

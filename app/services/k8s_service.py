@@ -237,7 +237,7 @@ def generate_eks_kubeconfig_file(
                         "--cluster-name", cluster_name,
                     ],
                     # Env vars for AWS CLI should be set in the environment where this command runs
-                    # (e.g., the environment of the MCP server itself if it has AWS CLI and credentials)
+                    # (e.g., the environment of the application itself if it has AWS CLI and credentials)
                     # "env": [
                     #     {"name": "AWS_REGION", "value": aws_region},
                     # ] # AWS_REGION is often picked up by aws cli from env.
