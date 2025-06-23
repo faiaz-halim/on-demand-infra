@@ -32,7 +32,7 @@ sudo chmod +x kubectl
 sudo mv kubectl /usr/local/bin/kubectl
 echo "kubectl v${KUBECTL_VERSION} installed."
 
-# Calico CNI for Kind (will be applied by Kind config or MCP later)
+# Calico CNI for Kind (will be applied by Kind config or APP later)
 # For now, ensure kubectl is ready. If Calico needs specific tools, add here.
 # The Kind cluster config itself can specify Calico CNI.
 # Alternative: Download calico.yaml if a specific version is needed for `kubectl apply` later

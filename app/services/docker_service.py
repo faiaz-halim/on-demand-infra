@@ -74,7 +74,35 @@ def build_docker_image_locally(
             "image_tags": image.tags,
             "logs": "\n".join(logs_list)
         }
-
+    except BuildError as e:
+        logger.error(f"Docker image build failed for tag '{image_tag}': {str(e)}", exc_info=True)
+        # Capture logs from BuildError if available
+        if hasattr(e, 'build_log') and e.build_log:
+            for log_entry in e.build_log:
+                 if isinstance(log_entry, dict):
+                    if 'stream' in log_entry:
+                        logs_list.append(log_entry['stream'].strip())
+                    elif 'error' in log_entry:
+                        logs_list.append(f"ERROR: {log_entry['error']}")
+        return {
+            "success": False,
+            "error": f"Build failed: {str(e)}",
+            "logs": "\n".join(logs_list)
+        }
+    except APIError as e:
+        logger.error(f"Docker API error during build for tag '{image_tag}': {str(e)}", exc_info=True)
+        return {
+            "success": False,
+            "error": f"Docker API error: {str(e)}",
+            "logs": "\n".join(logs_list)
+        }
+    except Exception as e:
+        logger.error(f"An unexpected error occurred during image build for tag '{image_tag}': {str(e)}", exc_info=True)
+        return {
+            "success": False,
+            "error": f"Unexpected error: {str(e)}",
+            "logs": "\n".join(logs_list)
+        }
 # --- ECR Integration Functions ---
 
 def get_ecr_login_details(

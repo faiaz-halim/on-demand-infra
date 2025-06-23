@@ -44,7 +44,7 @@ if settings.AZURE_OPENAI_API_KEY and settings.AZURE_OPENAI_ENDPOINT and settings
         api_version=settings.AZURE_OPENAI_API_VERSION,
     )
 
-MCP_SYSTEM_PROMPT = """You are an expert AI assistant for the Model Context Protocol (MCP). Your goal is to help users automate infrastructure deployment and application setup.
+app_SYSTEM_PROMPT = """You are an expert AI assistant for the Model Context Protocol (APP). Your goal is to help users automate infrastructure deployment and application setup.
 You have access to several tools to assist you. When a user asks a question or requests an operation that could benefit from up-to-date information, technical documentation, best practices, or troubleshooting for specific errors, consider using the 'web_search' tool.
 For example, if asked about "best practices for securing an S3 bucket with Terraform," or "how to resolve 'XYZ error' with Kubernetes," you should use the web_search tool to gather relevant information before formulating your response or plan.
 When you use a tool, you will receive its output. Use this output to provide a comprehensive and accurate answer to the user.
@@ -56,7 +56,7 @@ async def list_models() -> ModelList:
     """Return a list of available models (OpenAI compatible endpoint)"""
     models = [
         Model(id=settings.AZURE_OPENAI_DEPLOYMENT, object="model", created=int(time.time()), owned_by="azure-openai"),
-        Model(id="mcp-server", object="model", created=int(time.time()), owned_by="mcp")
+        Model(id="app-server", object="model", created=int(time.time()), owned_by="app")
     ]
     return ModelList(data=models)
 
@@ -298,7 +298,7 @@ async def create_chat_completion(request: ChatCompletionRequest = Body(...)) -> 
     formatted_messages: List[Dict[str, Any]] = []
     has_system_prompt = any(msg.role == "system" for msg in request.messages)
     if not has_system_prompt:
-        formatted_messages.append({"role": "system", "content": MCP_SYSTEM_PROMPT})
+        formatted_messages.append({"role": "system", "content": app_SYSTEM_PROMPT})
     for msg in request.messages:
         formatted_messages.append(msg.model_dump(exclude_none=True))
 

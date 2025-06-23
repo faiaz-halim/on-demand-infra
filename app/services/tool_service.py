@@ -79,7 +79,7 @@ async def execute_tool(tool_name: str, arguments: Dict[str, Any]) -> Dict[str, A
 
 async def get_tool_response(tool_name: str, query: str, context: Optional[str] = None) -> Dict[str, Any]:
     """
-    Executes a tool call to external services (Context7 MCP or web search)
+    Executes a tool call to external services (Context7 APP or web search)
     to fetch documentation and best practices.
 
     Args:
@@ -113,7 +113,7 @@ async def get_tool_response(tool_name: str, query: str, context: Optional[str] =
 # Register the tool call function
 get_tool_response_schema = {
     "name": "get_tool_response",
-    "description": "Search for information using Context7 MCP or web search",
+    "description": "Search for information using Context7 APP or web search",
     "parameters": {
         "type": "object",
         "properties": {

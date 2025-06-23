@@ -1,15 +1,14 @@
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, status, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from app.routers import chat
 from app.core.config import settings
-from app.core.logging_config import setup_logging, get_logger
+from app.core.logging_config import get_logger
 import logging
 import traceback
 
-setup_logging()
 logger = get_logger(__name__)
 
 app = FastAPI(

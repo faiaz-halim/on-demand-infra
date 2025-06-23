@@ -4,6 +4,9 @@ import json
 import pathlib
 
 class Settings(BaseSettings):
+    PROJECT_NAME: str = "On-Demand Infra"
+    CORS_ORIGINS: List[str] = ["*"]
+    ENVIRONMENT: str = "development"
     # Azure OpenAI API settings
     AZURE_OPENAI_API_KEY: Optional[str] = None
     AZURE_OPENAI_ENDPOINT: Optional[str] = None
@@ -45,7 +48,7 @@ class Settings(BaseSettings):
     EC2_SSH_USERNAME: str = "ec2-user"
     EC2_PRIVATE_KEY_BASE_PATH: Optional[str] = None
     EC2_DEFAULT_REPO_PATH: str = "/home/ec2-user/app_repo"
-    EC2_DEFAULT_REMOTE_MANIFEST_PATH: str = "/tmp/mcp_manifests"
+    EC2_DEFAULT_REMOTE_MANIFEST_PATH: str = "/tmp/app_manifests"
 
     # EKS Default settings for Cloud-Hosted
     EKS_DEFAULT_VERSION: str = "1.29"
@@ -56,13 +59,13 @@ class Settings(BaseSettings):
     EKS_DEFAULT_VPC_CIDR: str = "10.0.0.0/16"
     EKS_DEFAULT_NUM_PUBLIC_SUBNETS: int = 2
     EKS_DEFAULT_NUM_PRIVATE_SUBNETS: int = 2
-    EKS_DEFAULT_CLUSTER_NAME_PREFIX: str = "mcp-eks"
+    EKS_DEFAULT_CLUSTER_NAME_PREFIX: str = "appeks"
     EKS_DEFAULT_NODE_GROUP_NAME_SUFFIX: str = "ng-default"
 
     # ECR Defaults
     ECR_DEFAULT_IMAGE_TAG_MUTABILITY: str = "MUTABLE"
     ECR_DEFAULT_SCAN_ON_PUSH: bool = True
-    ECR_DEFAULT_REPO_NAME_PREFIX: str = "mcp-app"
+    ECR_DEFAULT_REPO_NAME_PREFIX: str = "appapp"
 
     # EKS Kubeconfig settings
     EKS_DEFAULT_USER_ARN: Optional[str] = None
@@ -74,7 +77,7 @@ class Settings(BaseSettings):
     INGRESS_DEFAULT_SSL_REDIRECT: bool = True
     INGRESS_DEFAULT_HTTP_PATH: str = "/"
     INGRESS_DEFAULT_PATH_TYPE: str = "Prefix"
-    DEFAULT_DOMAIN_NAME_FOR_APPS: Optional[str] = None # e.g. "mcpapps.example.com"
+    DEFAULT_DOMAIN_NAME_FOR_APPS: Optional[str] = None # e.g. "appapps.example.com"
 
     # Nginx specific settings for service lookup
     NGINX_INGRESS_NAMESPACE: str = "ingress-nginx"
@@ -85,7 +88,7 @@ class Settings(BaseSettings):
     ROUTE53_ACM_TF_FILENAME: str = "domain_infra.tf"
 
     # Persistent workspace for Terraform states, etc.
-    PERSISTENT_WORKSPACE_BASE_DIR: str = "/app/mcp_workspaces"
+    PERSISTENT_WORKSPACE_BASE_DIR: str = "/app/app_workspaces"
 
 
     @property

@@ -93,7 +93,7 @@ def remove_workspace(workspace_path: Path):
 
 # Example usage (for testing this module directly):
 # if __name__ == "__main__":
-#     test_repo_url = "https://github.com/jules-agent/mcp-server-test-repo.git" # A sample public repo
+#     test_repo_url = "https://github.com/jules-agent/app-server-test-repo.git" # A sample public repo
 #     # test_repo_url = "https://github.com/pallets/flask.git" # A larger public repo
 #     # test_repo_url_invalid = "https://invalid.url/foo/bar.git"
 

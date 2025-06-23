@@ -49,7 +49,7 @@ async def handle_cloud_local_deployment(
     # ... (implementation as before, from previous steps) ...
     repo_name_part = repo_url.split('/')[-1].replace('.git', '').replace('.', '-')
     unique_id = uuid.uuid4().hex[:6]
-    instance_name_tag = chat_request.instance_id or f"mcp-cl-{repo_name_part}-{unique_id}"
+    instance_name_tag = chat_request.instance_id or f"appcl-{repo_name_part}-{unique_id}"
     sg_name = f"{instance_name_tag}-sg"
     app_name = repo_name_part.lower().replace('_', '-')
 
@@ -175,7 +175,7 @@ async def handle_cloud_local_deployment(
         service_yaml = manifest_service.generate_service_manifest(app_name=app_name, service_type="NodePort", ports_mapping=[{'port': 80, 'targetPort': container_port, 'nodePort': node_port_num}], namespace=namespace)
         if not deployment_yaml or not service_yaml: err_msg = "Failed to generate K8s manifests." ; await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}"); return {"status": "error", "message": err_msg}
 
-        local_manifest_temp_dir_path = pathlib.Path(tempfile.mkdtemp(prefix="mcp_manifests_local_"))
+        local_manifest_temp_dir_path = pathlib.Path(tempfile.mkdtemp(prefix="app_manifests_local_"))
         logger.info(f"Created local temp manifest dir: {local_manifest_temp_dir_path}")
         try:
             with open(local_manifest_temp_dir_path / "deployment.yaml", "w") as f: f.write(deployment_yaml)
@@ -542,7 +542,7 @@ async def handle_cloud_hosted_deployment(
             f"EKS & ECR infrastructure provisioned. ECR Repo: {tf_ecr_repo_name_output}, EKS Endpoint: {eks_endpoint}. Now building and pushing image...")
 
         # 5. Clone User's Repo Locally
-        clone_workspace_path = pathlib.Path(tempfile.mkdtemp(prefix="mcp_clone_ch_"))
+        clone_workspace_path = pathlib.Path(tempfile.mkdtemp(prefix="app_clone_ch_"))
         logger.info(f"Created temporary clone workspace: {clone_workspace_path}")
         await _append_message_to_chat(chat_request, "assistant", f"Cloning repository {repo_url} locally for image build...")
 
@@ -591,7 +591,7 @@ async def handle_cloud_hosted_deployment(
         logger.info(f"Repository cloned to {actual_cloned_path}")
 
         # 6. Build Docker Image Locally
-        local_image_tag = f"{repo_name_from_url.lower()}-mcp:{uuid.uuid4().hex[:8]}"
+        local_image_tag = f"{repo_name_from_url.lower()}-app:{uuid.uuid4().hex[:8]}"
         await _append_message_to_chat(chat_request, "assistant", f"Building Docker image {local_image_tag} locally...")
         build_result = await asyncio.to_thread(docker_service.build_docker_image_locally, actual_cloned_path, local_image_tag)
         build_logs = build_result.get('logs', '')
@@ -1142,7 +1142,7 @@ async def handle_cloud_hosted_redeploy(
     # Derive unique_id_part from cluster_name
     cluster_name_parts = cluster_name.split('-')
     unique_id_part = ""
-    if len(cluster_name_parts) > 3 and cluster_name_parts[0] == 'mcp' and cluster_name_parts[1] == 'eks':
+    if len(cluster_name_parts) > 3 and cluster_name_parts[0] == 'app' and cluster_name_parts[1] == 'eks':
         unique_id_part = cluster_name_parts[-1]
         # Potentially validate derived repo part against repo_name_from_url if strictness is needed
         derived_repo_part_from_cluster = "-".join(cluster_name_parts[2:-1])
@@ -1161,7 +1161,7 @@ async def handle_cloud_hosted_redeploy(
     ecr_repo_name_for_redeploy = f"{settings.ECR_DEFAULT_REPO_NAME_PREFIX}-{app_name}-{unique_id_part}" if unique_id_part else f"{settings.ECR_DEFAULT_REPO_NAME_PREFIX}-{app_name}"
     logger.info(f"Using ECR repository name for redeploy: {ecr_repo_name_for_redeploy}")
 
-    clone_workspace_path = pathlib.Path(tempfile.mkdtemp(prefix="mcp_redeploy_clone_"))
+    clone_workspace_path = pathlib.Path(tempfile.mkdtemp(prefix="app_redeploy_clone_"))
     pushed_image_uri_redeploy = None
     try:
         await _append_message_to_chat(chat_request, "assistant", f"Cloning repository {repo_url}{' on branch '+branch if branch else ''} locally...")
@@ -1182,7 +1182,7 @@ async def handle_cloud_hosted_redeploy(
         logger.info(f"Repository cloned to {actual_cloned_path}")
 
         new_image_version_tag = str(int(time.time()))
-        local_image_tag = f"{app_name}-mcp:{new_image_version_tag}"
+        local_image_tag = f"{app_name}-app:{new_image_version_tag}"
         await _append_message_to_chat(chat_request, "assistant", f"Building Docker image {local_image_tag} locally...")
         build_result = await asyncio.to_thread(docker_service.build_docker_image_locally, actual_cloned_path, local_image_tag)
         if not build_result.get("success"):

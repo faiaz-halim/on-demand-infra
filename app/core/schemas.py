@@ -19,7 +19,7 @@ class ChatMessage(BaseModel):
     # tool_calls: Optional[List[Any]] = None # For assistant role if it makes tool calls
 
 class ChatCompletionRequest(BaseModel):
-    model: Optional[str] = "mcp-server-default" # Can be used for internal routing
+    model: Optional[str] = "app-server-default" # Can be used for internal routing
     messages: List[ChatMessage]
     temperature: Optional[float] = 0.7
     top_p: Optional[float] = 1.0
@@ -141,3 +141,12 @@ class ChatCompletionResponse(BaseModel):
     choices: List[Choice]
     usage: Usage
     # system_fingerprint: Optional[str] = None # If needed
+
+class Model(BaseModel):
+    id: str
+    object: str = "model"
+    created: int
+    owned_by: str
+
+class ModelList(BaseModel):
+    data: List[Model]

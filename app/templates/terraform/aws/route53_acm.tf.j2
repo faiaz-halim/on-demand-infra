@@ -13,7 +13,7 @@ resource "aws_acm_certificate" "app_cert" {
 
   tags = {
     Name = "{{ app_full_domain_name }}-cert"
-    MCP-Deployment = "cloud-hosted"
+    APP-Deployment = "cloud-hosted"
   }
 
   lifecycle {

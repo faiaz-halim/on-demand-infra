@@ -16,7 +16,7 @@ resource "aws_ecr_repository" "ecr_repo" {
 
   tags = {
     Name = "{{ ecr_repo_name }}"
-    MCP-Deployment = "cloud-hosted"
+    APP-Deployment = "cloud-hosted"
   }
 }
 

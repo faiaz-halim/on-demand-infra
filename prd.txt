@@ -1,11 +1,11 @@
-# MCP Server - Product Requirements Document
+# APP Server - Product Requirements Document
 
 <PRD>
 
 # Technical Architecture
 
 ## System Components
-1.  **MCP Server Core**
+1.  **APP Server Core**
     *   Handles primary user interaction via an OpenAI compatible API.
     *   Orchestrates workflows for different deployment modes (local, cloud-local, cloud-hosted).
     *   Manages GitHub repository interactions (cloning, analysis of README.md, Dockerfile checks).
@@ -13,11 +13,11 @@
     *   Generates Terraform modules specifically for AWS cloud resources.
     *   Generates Kubernetes manifests for application deployment.
     *   Builds Docker images from application source code.
-    *   Communicates with other MCP servers (e.g., Context7) or searches the web for documentation and best practices.
+    *   Communicates with other APP servers (e.g., Context7) or searches the web for documentation and best practices.
 
 2.  **AI Integration Layer**
     *   Integrates with Azure OpenAI API for chat processing, understanding user intent, and assisting in code generation.
-    *   Facilitates tool calls to external services (Context7 MCP, web search) to gather contextual information, documentation, and best practices for Terraform and AWS.
+    *   Facilitates tool calls to external services (Context7 APP, web search) to gather contextual information, documentation, and best practices for Terraform and AWS.
 
 3.  **API Layer**
     *   Exposes an OpenAI API compatible endpoint (e.g., `/v1/chat/completions`) for receiving user prompts and streaming responses.
@@ -122,7 +122,7 @@
 2.  **GitHub API / Git CLI**
     *   Used for cloning public repositories specified by the user.
     *   No authentication required for public repositories.
-3.  **Context7 MCP / Web Search API (Generic)**
+3.  **Context7 APP / Web Search API (Generic)**
     *   Interface for querying external knowledge sources for documentation and best practices.
     *   Specific API details TBD based on chosen provider(s).
 4.  **AWS SDK / Terraform AWS Provider**
@@ -131,17 +131,17 @@
 5.  **Docker CLI / Engine API**
     *   Used for building Docker images from application source code.
     *   Used for Docker-in-Docker builds in `cloud-hosted` mode.
-    *   MCP server's host environment must have Docker installed.
+    *   APP server's host environment must have Docker installed.
 6.  **Kubernetes API (Kind / EKS)**
     *   Used for deploying and managing applications within Kind clusters or EKS clusters.
     *   Interaction managed via `kubectl` commands or Kubernetes client libraries, driven by generated manifests.
 
 ## Infrastructure Requirements
-1.  **MCP Server Host Environment**
+1.  **APP Server Host Environment**
     *   Docker and Docker Compose must be pre-installed.
-    *   Sufficient resources (CPU, RAM, Disk) to run the MCP server, build Docker images, and potentially a local Kind cluster.
+    *   Sufficient resources (CPU, RAM, Disk) to run the APP server, build Docker images, and potentially a local Kind cluster.
 2.  **Local Mode Target Environment**
-    *   Kind Kubernetes installed (or MCP can install it if a module is provided).
+    *   Kind Kubernetes installed (or APP can install it if a module is provided).
     *   Calico CNI (template to be provided by user/system).
 3.  **Cloud-Local Mode Target Environment (AWS)**
     *   AWS EC2 instance (minimum 4 CPU, 8GB RAM, user-configurable).
@@ -188,7 +188,7 @@
     *   Deploy the application to the Kind cluster running on the EC2 instance.
     *   Expose application via EC2's public IP or a simple Load Balancer configured by Terraform.
 4.  **Tool Call Integration (Contextualization)**
-    *   Implement framework for tool calls (e.g., to Context7 MCP or web search).
+    *   Implement framework for tool calls (e.g., to Context7 APP or web search).
     *   Develop initial prompts for fetching Terraform documentation and AWS best practices related to user queries or generated modules.
 5.  **Lifecycle Management (Cloud-Local)**
     *   Handle redeployment, scaling (within Kind on EC2).
@@ -299,8 +299,8 @@
 
 ## User Expectations
 1.  **"Magic" IaC Generation**
-    *   **Risk**: Users might expect the MCP server to perfectly generate complex, production-ready IaC for any application with minimal input.
-    *   **Mitigation**: Clearly communicate that the MCP server is an assistant/accelerator. Emphasize that generated code should be reviewed. Provide transparency into the generation process (e.g., what documentation sources were consulted). Start with simpler, common use cases.
+    *   **Risk**: Users might expect the APP server to perfectly generate complex, production-ready IaC for any application with minimal input.
+    *   **Mitigation**: Clearly communicate that the APP server is an assistant/accelerator. Emphasize that generated code should be reviewed. Provide transparency into the generation process (e.g., what documentation sources were consulted). Start with simpler, common use cases.
 2.  **Cost Implications of Cloud Modes**
     *   **Risk**: Users might not be fully aware of the AWS costs incurred by `cloud-local` and `cloud-hosted` modes.
     *   **Mitigation**: Provide clear warnings about potential AWS costs before provisioning resources. Allow users to specify smaller/cheaper instance types where feasible (e.g., for `cloud-local` EC2). Make decommissioning (Terraform destroy) straightforward.
@@ -381,7 +381,7 @@
 *   **Goal**: Fetch relevant, up-to-date documentation or best practices.
 *   **Structure Example**:
     ```
-    Search for information on: "{specific_query_from_mcp_or_user}"
+    Search for information on: "{specific_query_from_app_or_user}"
     Focus on:
     - Official AWS documentation
     - Terraform Registry documentation
@@ -394,7 +394,7 @@
 ## File System Specification (Illustrative)
 
 ```
-/mcp_server_root/
+/app_server_root/
 ├── templates/
 │   ├── kind/
 │   │   ├── kind-config.yaml.tpl  // Kind cluster config template
@@ -417,8 +417,8 @@
 │       │   └── service.yaml
 │       └── build_logs/
 │           └── docker_build.log
-├── .env                   // For MCP server configuration (e.g., Azure API Key)
-└── mcp_server.py          // Main application
+├── .env                   // For APP server configuration (e.g., Azure API Key)
+└── app_server.py          // Main application
 ```
 
 ## API Specification (OpenAI Compatible)
@@ -451,50 +451,50 @@
 *   **Goal**: Deploy application to a local Kind Kubernetes cluster.
 *   **Workflow**:
     1.  User selects `local` mode, provides GitHub URL.
-    2.  MCP clones repo, analyzes Dockerfile/README.
-    3.  MCP builds Docker image locally.
-    4.  MCP checks for existing Kind cluster or creates one using a template (e.g., `templates/kind/kind-config.yaml.tpl`). Installs Calico CNI from `templates/kind/calico.yaml`.
+    2.  APP clones repo, analyzes Dockerfile/README.
+    3.  APP builds Docker image locally.
+    4.  APP checks for existing Kind cluster or creates one using a template (e.g., `templates/kind/kind-config.yaml.tpl`). Installs Calico CNI from `templates/kind/calico.yaml`.
     5.  User may be asked for a namespace if cluster exists.
-    6.  MCP generates Kubernetes manifests (Deployment, Service with NodePort, Secrets for env vars).
-    7.  MCP loads Docker image into Kind nodes.
-    8.  MCP applies manifests to deploy the application.
-    9.  MCP provides user with NodePort URL (e.g., `http://localhost:<nodeport>`).
+    6.  APP generates Kubernetes manifests (Deployment, Service with NodePort, Secrets for env vars).
+    7.  APP loads Docker image into Kind nodes.
+    8.  APP applies manifests to deploy the application.
+    9.  APP provides user with NodePort URL (e.g., `http://localhost:<nodeport>`).
     10. Handles redeployment, scaling (kubectl scale), decommission (kubectl delete namespace/resources).
 
 ### 2. Cloud-Local Mode
 *   **Goal**: Deploy application to a Kind cluster running on a dedicated AWS EC2 instance.
 *   **Workflow**:
     1.  User selects `cloud-local` mode, provides GitHub URL, AWS credentials, optionally EC2 instance size.
-    2.  MCP generates Terraform to:
+    2.  APP generates Terraform to:
         *   Provision EC2 instance (e.g., using `templates/terraform/aws/ec2_instance_base.tf.tpl`).
         *   Setup Security Group (allow SSH, app ports).
         *   Install Docker, Kind, Calico, and any other prerequisites on EC2 via user-data or provisioners.
-    3.  MCP applies Terraform.
-    4.  MCP (or script on EC2) clones app repo, builds Docker image on EC2.
-    5.  MCP (or script on EC2) loads image into Kind on EC2, deploys app using generated K8s manifests.
+    3.  APP applies Terraform.
+    4.  APP (or script on EC2) clones app repo, builds Docker image on EC2.
+    5.  APP (or script on EC2) loads image into Kind on EC2, deploys app using generated K8s manifests.
     6.  Application exposed via EC2 Public IP and NodePort, or simple AWS Load Balancer configured by Terraform.
-    7.  MCP provides user with public URL.
+    7.  APP provides user with public URL.
     8.  Handles redeployment, scaling (within Kind), decommission (Terraform destroy for EC2 and related resources).
 
 ### 3. Cloud-Hosted Mode
 *   **Goal**: Deploy application to AWS EKS, exposed via NLB and Route53, with SSL.
 *   **Workflow**:
     1.  User selects `cloud-hosted` mode, provides GitHub URL, AWS credentials. Assumes a Route53 hosted zone is available.
-    2.  MCP generates Terraform to:
+    2.  APP generates Terraform to:
         *   Create ECR repository.
         *   Create EKS cluster with managed node groups (e.g., using `templates/terraform/aws/eks_cluster_base.tf.tpl`).
         *   Setup VPC, subnets, IAM roles for EKS.
-    3.  MCP applies initial Terraform.
-    4.  MCP performs Docker-in-Docker build of application, pushes image to ECR.
-    5.  MCP generates Kubernetes manifests (Deployment using ECR image, Service type LoadBalancer or ClusterIP).
-    6.  MCP generates Terraform/Kubernetes manifests to install Nginx Ingress controller in EKS.
-    7.  MCP configures Ingress resource for the application.
-    8.  MCP generates Terraform to:
+    3.  APP applies initial Terraform.
+    4.  APP performs Docker-in-Docker build of application, pushes image to ECR.
+    5.  APP generates Kubernetes manifests (Deployment using ECR image, Service type LoadBalancer or ClusterIP).
+    6.  APP generates Terraform/Kubernetes manifests to install Nginx Ingress controller in EKS.
+    7.  APP configures Ingress resource for the application.
+    8.  APP generates Terraform to:
         *   Provision AWS Network Load Balancer (NLB) for Nginx Ingress.
         *   Create Route53 subdomain record pointing to NLB.
         *   Create ACM certificate for the subdomain and attach to NLB listener.
-    9.  MCP applies remaining Terraform and Kubernetes manifests.
-    10. MCP provides user with HTTPS URL of the application.
+    9.  APP applies remaining Terraform and Kubernetes manifests.
+    10. APP provides user with HTTPS URL of the application.
     11. Handles redeployment, scaling (EKS autoscaling/manual), decommission (Terraform destroy).
 
 </PRD>

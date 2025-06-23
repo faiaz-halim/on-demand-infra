@@ -67,9 +67,9 @@ Ensure the following critical variables are set in your `.env` file:
     *   *(Optional)* `AZURE_EMBEDDING_DEPLOYMENT`, `AZURE_EMBEDDING_API_VERSION` if using embedding features separately.
 
 *   **Application Specific Settings:**
-    *   `PERSISTENT_WORKSPACE_BASE_DIR`: (Optional) Path to a directory where application will store persistent Terraform workspaces. Defaults to `/app/mcp_workspaces` within the container, or `./mcp_workspaces` if run locally without Docker. Ensure this path is writable by the server process.
+    *   `PERSISTENT_WORKSPACE_BASE_DIR`: (Optional) Path to a directory where application will store persistent Terraform workspaces. Defaults to `/app/app_workspaces` within the container, or `./app_workspaces` if run locally without Docker. Ensure this path is writable by the server process.
     *   `EC2_PRIVATE_KEY_BASE_PATH`: **Essential for Cloud-Local mode.** The absolute path on the server where EC2 private key files (e.g., `.pem` files) are stored. The server will look for `<key_name>.pem` (or just `<key_name>`) within this directory.
-    *   `DEFAULT_DOMAIN_NAME_FOR_APPS`: **Required for Cloud-Hosted custom domains.** The base domain name under which application subdomains will be created (e.g., `mcpapps.yourcompany.com`).
+    *   `DEFAULT_DOMAIN_NAME_FOR_APPS`: **Required for Cloud-Hosted custom domains.** The base domain name under which application subdomains will be created (e.g., `appapps.yourcompany.com`).
     *   `LOG_LEVEL`: (Optional) Set the application log level (e.g., `INFO`, `DEBUG`). Defaults to `INFO`.
 
 *   **Default AWS Settings (Optional - can be overridden by request-specific credentials):**
@@ -85,7 +85,7 @@ Ensure the following critical variables are set in your `.env` file:
 Once the setup and configuration are complete, you can run the application using Uvicorn:
 
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --log-config log_config.yaml
 ```
 
 *   `--host 0.0.0.0`: Makes the server accessible from outside its container/machine.
@@ -97,7 +97,7 @@ The API will then be available at `http://localhost:8000` (or your server's IP/h
 ## Deployment Modes
 
 Interaction with the application is primarily through its OpenAI-compatible API endpoint: `POST /v1/chat/completions`.
-The request body should be a JSON object adhering to the `ChatCompletionRequest` schema (see `app.core.schemas.py` for details, or refer to OpenAI's chat completion API, with added MCP-specific fields).
+The request body should be a JSON object adhering to the `ChatCompletionRequest` schema (see `app.core.schemas.py` for details, or refer to OpenAI's chat completion API, with added APP-specific fields).
 
 Below are example `curl` commands to test the `deploy` action for each mode. You'll need to replace placeholder values (like `<YOUR_...>`, repository URLs) with your actual data.
 
@@ -119,13 +119,13 @@ Below are example `curl` commands to test the `deploy` action for each mode. You
 curl -X POST http://localhost:8000/v1/chat/completions \
 -H "Content-Type: application/json" \
 -d '{
-  "model": "mcp-server-default",
+  "model": "app-server-default",
   "messages": [
     {"role": "user", "content": "Deploy my simple web app."}
   ],
   "action": "deploy",
   "deployment_mode": "local",
-  "github_repo_url": "https://github.com/jules-agent/mcp-server-test-repo.git",
+  "github_repo_url": "https://github.com/jules-agent/app-server-test-repo.git",
   "target_namespace": "my-local-app"
 }'
 ```
@@ -148,13 +148,13 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 curl -X POST http://localhost:8000/v1/chat/completions \
 -H "Content-Type: application/json" \
 -d '{
-  "model": "mcp-server-default",
+  "model": "app-server-default",
   "messages": [
     {"role": "user", "content": "Deploy my web app to a cloud-local environment."}
   ],
   "action": "deploy",
   "deployment_mode": "cloud-local",
-  "github_repo_url": "https://github.com/jules-agent/mcp-server-test-repo.git",
+  "github_repo_url": "https://github.com/jules-agent/app-server-test-repo.git",
   "target_namespace": "my-app-cl",
   "instance_name": "my-test-ec2-instance",
   "ec2_key_name": "<YOUR_EC2_KEY_PAIR_NAME>",
@@ -188,13 +188,13 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 curl -X POST http://localhost:8000/v1/chat/completions \
 -H "Content-Type: application/json" \
 -d '{
-  "model": "mcp-server-default",
+  "model": "app-server-default",
   "messages": [
     {"role": "user", "content": "Deploy my web app to a managed EKS cluster."}
   ],
   "action": "deploy",
   "deployment_mode": "cloud-hosted",
-  "github_repo_url": "https://github.com/jules-agent/mcp-server-test-repo.git",
+  "github_repo_url": "https://github.com/jules-agent/app-server-test-repo.git",
   "target_namespace": "my-app-eks",
   "instance_name": "my-eks-app-deployment",
   "aws_credentials": {
@@ -210,13 +210,13 @@ curl -X POST http://localhost:8000/v1/chat/completions \
 curl -X POST http://localhost:8000/v1/chat/completions \
 -H "Content-Type: application/json" \
 -d '{
-  "model": "mcp-server-default",
+  "model": "app-server-default",
   "messages": [
     {"role": "user", "content": "Deploy my web app to EKS with a custom domain."}
   ],
   "action": "deploy",
   "deployment_mode": "cloud-hosted",
-  "github_repo_url": "https://github.com/jules-agent/mcp-server-test-repo.git",
+  "github_repo_url": "https://github.com/jules-agent/app-server-test-repo.git",
   "target_namespace": "my-app-eks-ssl",
   "instance_name": "my-eks-app-ssl",
   "aws_credentials": {
@@ -252,19 +252,19 @@ Example redeploy command:
 curl -X POST http://localhost:8000/v1/chat/completions \
 -H "Content-Type: application/json" \
 -d '{
-  "model": "mcp-server-default",
+  "model": "app-server-default",
   "messages": [{"role": "user", "content": "Redeploy my application"}],
   "action": "redeploy",
   "deployment_mode": "cloud-hosted",
   "instance_id": "my-eks-cluster",
-  "github_repo_url": "https://github.com/jules-agent/mcp-server-test-repo.git"
+  "github_repo_url": "https://github.com/jules-agent/app-server-test-repo.git"
 }'
 ```
 
 ## API Reference
 ### POST /v1/chat/completions
 **Parameters:**
-- `model` (string): Must be "mcp-server-default"
+- `model` (string): Must be "app-server-default"
 - `messages` (array): Conversation history
 - `action` (string): One of ["deploy", "redeploy", "scale", "decommission"]
 - `deployment_mode` (string): One of ["local", "cloud-local", "cloud-hosted"]

@@ -202,7 +202,7 @@
     {
       "id": 7,
       "title": "Phase 2: Tool Call Integration for Contextualization",
-      "description": "Implement the framework for making tool calls to external services (e.g., Context7 MCP, web search) to fetch documentation and best practices.",
+      "description": "Implement the framework for making tool calls to external services (e.g., Context7 APP, web search) to fetch documentation and best practices.",
       "status": "done",
       "updatedAt": "2025-06-23T17:00:00Z",
       "subtasks": [

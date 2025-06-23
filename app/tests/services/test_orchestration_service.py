@@ -38,7 +38,7 @@ class TestOrchestrationService(unittest.IsolatedAsyncioTestCase):
         self.original_private_key_base_path = app_settings.EC2_PRIVATE_KEY_BASE_PATH
         self.original_persistent_workspace_base_dir = app_settings.PERSISTENT_WORKSPACE_BASE_DIR
 
-        self.test_persistent_workspaces = tempfile.mkdtemp(prefix="mcp_test_persistent_")
+        self.test_persistent_workspaces = tempfile.mkdtemp(prefix="app_test_persistent_")
         app_settings.PERSISTENT_WORKSPACE_BASE_DIR = self.test_persistent_workspaces
 
     def tearDown(self):
@@ -95,8 +95,8 @@ class TestOrchestrationService(unittest.IsolatedAsyncioTestCase):
         mock_orch_settings.EC2_PRIVATE_KEY_BASE_PATH = "/test/keys"
         mock_orch_settings.EC2_SSH_USERNAME = "test-user"
         mock_orch_settings.EC2_DEFAULT_REPO_PATH = "/home/test-user/app"
-        mock_orch_settings.KIND_CLUSTER_NAME = "mcp-kind-cluster"
-        mock_orch_settings.EC2_DEFAULT_REMOTE_MANIFEST_PATH = "/tmp/mcp_manifests_remote"
+        mock_orch_settings.KIND_CLUSTER_NAME = "appkind-cluster"
+        mock_orch_settings.EC2_DEFAULT_REMOTE_MANIFEST_PATH = "/tmp/app_manifests_remote"
         mock_orch_settings.PERSISTENT_WORKSPACE_BASE_DIR = self.test_persistent_workspaces
 
         mock_path_instance = MagicMock(spec=pathlib.Path)
@@ -104,13 +104,13 @@ class TestOrchestrationService(unittest.IsolatedAsyncioTestCase):
         mock_path_instance.__str__.return_value = "/test/keys/user_provided_key.pem"
 
         mock_persistent_workspace_path_obj = MagicMock(spec=pathlib.Path)
-        mock_persistent_workspace_path_obj.__str__.return_value = f"{self.test_persistent_workspaces}/cloud-local/mcp-cl-repo-testuuid"
+        mock_persistent_workspace_path_obj.__str__.return_value = f"{self.test_persistent_workspaces}/cloud-local/appcl-repo-testuuid"
         mock_persistent_workspace_path_obj.mkdir = MagicMock()
         mock_persistent_workspace_path_obj.__truediv__.side_effect = lambda p: pathlib.Path(str(mock_persistent_workspace_path_obj), p)
 
         def path_side_effect(arg):
             if arg == mock_orch_settings.EC2_PRIVATE_KEY_BASE_PATH: return mock_path_instance
-            elif "mcp-cl-repo-testuuid" in str(arg) : return mock_persistent_workspace_path_obj
+            elif "appcl-repo-testuuid" in str(arg) : return mock_persistent_workspace_path_obj
             else: mp = MagicMock(spec=pathlib.Path); mp.__str__.return_value = str(arg); return mp
         mock_pathlib_Path.side_effect = path_side_effect
         mock_mkdtemp.return_value = "/mocked/local_manifest_temp"
@@ -126,8 +126,8 @@ class TestOrchestrationService(unittest.IsolatedAsyncioTestCase):
             response = await handle_cloud_local_deployment(self.repo_url, self.namespace, self.aws_creds, chat_request)
 
         self.assertEqual(response["status"], "success")
-        self.assertIn("EC2 instance mcp-cl-repo-testuuid is provisioning", response["message"])
-        self.assertEqual(response["instance_id"], "mcp-cl-repo-testuuid")
+        self.assertIn("EC2 instance appcl-repo-testuuid is provisioning", response["message"])
+        self.assertEqual(response["instance_id"], "appcl-repo-testuuid")
         mock_gen_tf_config.assert_called_with(unittest.mock.ANY, str(mock_persistent_workspace_path_obj))
         mock_rmtree.assert_called_once_with("/mocked/local_manifest_temp")
         mock_tf_destroy.assert_not_called()
@@ -138,7 +138,7 @@ class TestOrchestrationService(unittest.IsolatedAsyncioTestCase):
     @patch('app.services.orchestration_service.pathlib.Path')
     @patch('app.services.orchestration_service.settings')
     async def test_handle_cloud_local_decommission_success(self, mock_settings, mock_pathlib_Path, mock_tf_init, mock_tf_destroy, mock_rmtree):
-        instance_id = "mcp-cl-testapp-123456"
+        instance_id = "appcl-testapp-123456"
         mock_settings.PERSISTENT_WORKSPACE_BASE_DIR = self.test_persistent_workspaces
         mock_workspace_path_instance = MagicMock(); mock_workspace_path_instance.exists.return_value = True; mock_workspace_path_instance.is_dir.return_value = True
         mock_pathlib_Path.return_value = mock_workspace_path_instance
@@ -176,14 +176,14 @@ class TestOrchestrationService(unittest.IsolatedAsyncioTestCase):
                                          ):
 
         mock_settings.PERSISTENT_WORKSPACE_BASE_DIR = self.test_persistent_workspaces
-        mock_settings.EKS_DEFAULT_CLUSTER_NAME_PREFIX = "mcp-eks-test"; mock_settings.ECR_DEFAULT_REPO_NAME_PREFIX = "mcp-app-test"
+        mock_settings.EKS_DEFAULT_CLUSTER_NAME_PREFIX = "appeks-test"; mock_settings.ECR_DEFAULT_REPO_NAME_PREFIX = "appapp-test"
         mock_settings.EKS_DEFAULT_VPC_CIDR = "10.1.0.0/16"; mock_settings.EKS_DEFAULT_NUM_PUBLIC_SUBNETS = 1
         mock_settings.EKS_DEFAULT_NUM_PRIVATE_SUBNETS = 1; mock_settings.EKS_DEFAULT_VERSION = "1.27"
         mock_settings.EKS_DEFAULT_NODE_GROUP_NAME_SUFFIX = "ng-custom"; mock_settings.EKS_DEFAULT_NODE_INSTANCE_TYPE = "t3.small"
         mock_settings.EKS_DEFAULT_NODE_DESIRED_SIZE = 1; mock_settings.EKS_DEFAULT_NODE_MIN_SIZE = 1; mock_settings.EKS_DEFAULT_NODE_MAX_SIZE = 1
         mock_settings.ECR_DEFAULT_IMAGE_TAG_MUTABILITY = "IMMUTABLE"; mock_settings.ECR_DEFAULT_SCAN_ON_PUSH = False
         mock_settings.EC2_DEFAULT_APP_PORTS_JSON = json.dumps([{"port": 8080, "protocol": "tcp"}])
-        mock_settings.DEFAULT_DOMAIN_NAME_FOR_APPS = "mcp-test.com"; mock_settings.NGINX_INGRESS_SERVICE_NAME = "ingress-nginx-controller-svc"
+        mock_settings.DEFAULT_DOMAIN_NAME_FOR_APPS = "apptest.com"; mock_settings.NGINX_INGRESS_SERVICE_NAME = "ingress-nginx-controller-svc"
         mock_settings.NGINX_INGRESS_NAMESPACE = "ingress-nginx"; mock_settings.LOAD_BALANCER_DETAILS_TIMEOUT_SECONDS = 20
         mock_settings.ROUTE53_ACM_TF_FILENAME = "dns_and_cert_setup.tf"; mock_settings.EKS_DEFAULT_USER_ARN = "arn:aws:iam::123456789012:user/kubeconfig-user"
         mock_settings.NGINX_HELM_CHART_VERSION = "4.9.0"
@@ -199,7 +199,7 @@ class TestOrchestrationService(unittest.IsolatedAsyncioTestCase):
         mock_ph_cluster_dir_obj.mkdir = MagicMock()
         mock_ph_cluster_dir_obj.__truediv__.side_effect = lambda p: pathlib.Path(str(mock_ph_cluster_dir_obj), p)
 
-        mock_temp_clone_dir_str = "/tmp/mcp_clone_ch_helper"
+        mock_temp_clone_dir_str = "/tmp/app_clone_ch_helper"
         mock_mkdtemp.return_value = mock_temp_clone_dir_str
         mock_cloned_repo_subdir_path_obj = MagicMock(spec=pathlib.Path)
         mock_cloned_repo_subdir_path_obj.__str__.return_value = f"{mock_temp_clone_dir_str}/{_expected_repo_name_part_for_mock}"
@@ -230,7 +230,7 @@ class TestOrchestrationService(unittest.IsolatedAsyncioTestCase):
         mock_run_terraform_apply.return_value = (True, mock_tf_outputs_eks_ecr, "apply_stdout_eks_ecr", "")
 
         mock_clone_repository.return_value = {"success": True, "cloned_path": str(mock_cloned_repo_subdir_path_obj)}
-        expected_local_tag_for_test = f"{_expected_repo_name_part_for_mock}-mcp:{mock_uuid4.return_value.hex}"
+        expected_local_tag_for_test = f"{_expected_repo_name_part_for_mock}-app:{mock_uuid4.return_value.hex}"
         mock_build_docker_image_locally.return_value = {"success": True, "image_id": "img123", "image_tags": [expected_local_tag_for_test]}
         mock_ecr_registry_from_token = f"https://12345.dkr.ecr.{self.aws_creds.aws_region}.amazonaws.com"
         mock_get_ecr_login_details.return_value = ("AWS", "ecr_pass_secret", mock_ecr_registry_from_token)
@@ -799,8 +799,8 @@ class TestOrchestrationService(unittest.IsolatedAsyncioTestCase):
         mock_run_terraform_init, mock_run_terraform_apply
     ):
         mock_settings.PERSISTENT_WORKSPACE_BASE_DIR = self.test_persistent_workspaces
-        mock_settings.EKS_DEFAULT_CLUSTER_NAME_PREFIX = "mcp-eks"
-        mock_settings.ECR_DEFAULT_REPO_NAME_PREFIX = "mcp-app"
+        mock_settings.EKS_DEFAULT_CLUSTER_NAME_PREFIX = "appeks"
+        mock_settings.ECR_DEFAULT_REPO_NAME_PREFIX = "appapp"
 
         # Make terraform_service functions awaitable mocks that return successful values
         mock_generate_ecr_tf_config.return_value = "path/to/ecr.tf"
@@ -866,7 +866,7 @@ class TestOrchestrationService(unittest.IsolatedAsyncioTestCase):
         # Simulate successful Terraform apply with necessary outputs for ECR push
         mock_tf_outputs = {
             "ecr_repository_url": {"value": "test_ecr_url_output"},
-            "ecr_repository_name": {"value": "mcp-app-test-repo-testuuid"},
+            "ecr_repository_name": {"value": "appapp-test-repo-testuuid"},
         }
         mock_tf_apply.return_value = (True, mock_tf_outputs, "apply_stdout", "")
 
@@ -916,7 +916,7 @@ class TestOrchestrationService(unittest.IsolatedAsyncioTestCase):
 
         mock_tf_outputs = {
             "ecr_repository_url": {"value": "test_ecr_url_output"},
-            "ecr_repository_name": {"value": "mcp-app-test-repo-testuuid"},
+            "ecr_repository_name": {"value": "appapp-test-repo-testuuid"},
         }
         mock_tf_apply.return_value = (True, mock_tf_outputs, "apply_stdout", "")
 
@@ -1159,8 +1159,8 @@ if __name__ == '__main__':
         mock_orch_settings.EC2_PRIVATE_KEY_BASE_PATH = "/test/keys"
         mock_orch_settings.EC2_SSH_USERNAME = "test-user"
         mock_orch_settings.EC2_DEFAULT_REPO_PATH = "/home/test-user/app"
-        mock_orch_settings.KIND_CLUSTER_NAME = "mcp-kind-cluster"
-        mock_orch_settings.EC2_DEFAULT_REMOTE_MANIFEST_PATH = "/tmp/mcp_manifests_remote"
+        mock_orch_settings.KIND_CLUSTER_NAME = "appkind-cluster"
+        mock_orch_settings.EC2_DEFAULT_REMOTE_MANIFEST_PATH = "/tmp/app_manifests_remote"
         mock_orch_settings.PERSISTENT_WORKSPACE_BASE_DIR = self.test_persistent_workspaces
 
         mock_path_instance = MagicMock(spec=pathlib.Path)
@@ -1168,13 +1168,13 @@ if __name__ == '__main__':
         mock_path_instance.__str__.return_value = "/test/keys/user_provided_key.pem"
 
         mock_persistent_workspace_path_obj = MagicMock(spec=pathlib.Path)
-        mock_persistent_workspace_path_obj.__str__.return_value = f"{self.test_persistent_workspaces}/cloud-local/mcp-cl-repo-testuuid"
+        mock_persistent_workspace_path_obj.__str__.return_value = f"{self.test_persistent_workspaces}/cloud-local/appcl-repo-testuuid"
         mock_persistent_workspace_path_obj.mkdir = MagicMock()
         mock_persistent_workspace_path_obj.__truediv__.side_effect = lambda p: pathlib.Path(str(mock_persistent_workspace_path_obj), p)
 
         def path_side_effect(arg):
             if arg == mock_orch_settings.EC2_PRIVATE_KEY_BASE_PATH: return mock_path_instance
-            elif "mcp-cl-repo-testuuid" in str(arg) : return mock_persistent_workspace_path_obj
+            elif "appcl-repo-testuuid" in str(arg) : return mock_persistent_workspace_path_obj
             else: mp = MagicMock(spec=pathlib.Path); mp.__str__.return_value = str(arg); return mp
         mock_pathlib_Path.side_effect = path_side_effect
         mock_mkdtemp.return_value = "/mocked/local_manifest_temp"
@@ -1190,8 +1190,8 @@ if __name__ == '__main__':
             response = await handle_cloud_local_deployment(self.repo_url, self.namespace, self.aws_creds, chat_request)
 
         self.assertEqual(response["status"], "success")
-        self.assertIn("EC2 instance mcp-cl-repo-testuuid is provisioning", response["message"])
-        self.assertEqual(response["instance_id"], "mcp-cl-repo-testuuid")
+        self.assertIn("EC2 instance appcl-repo-testuuid is provisioning", response["message"])
+        self.assertEqual(response["instance_id"], "appcl-repo-testuuid")
         mock_gen_tf_config.assert_called_with(unittest.mock.ANY, str(mock_persistent_workspace_path_obj))
         mock_rmtree.assert_called_once_with("/mocked/local_manifest_temp")
         mock_tf_destroy.assert_not_called()
@@ -1202,7 +1202,7 @@ if __name__ == '__main__':
     @patch('app.services.orchestration_service.pathlib.Path')
     @patch('app.services.orchestration_service.settings')
     async def test_handle_cloud_local_decommission_success(self, mock_settings, mock_pathlib_Path, mock_tf_init, mock_tf_destroy, mock_rmtree):
-        instance_id = "mcp-cl-testapp-123456"
+        instance_id = "appcl-testapp-123456"
         mock_settings.PERSISTENT_WORKSPACE_BASE_DIR = self.test_persistent_workspaces
         mock_workspace_path_instance = MagicMock(); mock_workspace_path_instance.exists.return_value = True; mock_workspace_path_instance.is_dir.return_value = True
         mock_pathlib_Path.return_value = mock_workspace_path_instance
@@ -1240,14 +1240,14 @@ if __name__ == '__main__':
                                          ):
 
         mock_settings.PERSISTENT_WORKSPACE_BASE_DIR = self.test_persistent_workspaces
-        mock_settings.EKS_DEFAULT_CLUSTER_NAME_PREFIX = "mcp-eks-test"; mock_settings.ECR_DEFAULT_REPO_NAME_PREFIX = "mcp-app-test"
+        mock_settings.EKS_DEFAULT_CLUSTER_NAME_PREFIX = "appeks-test"; mock_settings.ECR_DEFAULT_REPO_NAME_PREFIX = "appapp-test"
         mock_settings.EKS_DEFAULT_VPC_CIDR = "10.1.0.0/16"; mock_settings.EKS_DEFAULT_NUM_PUBLIC_SUBNETS = 1
         mock_settings.EKS_DEFAULT_NUM_PRIVATE_SUBNETS = 1; mock_settings.EKS_DEFAULT_VERSION = "1.27"
         mock_settings.EKS_DEFAULT_NODE_GROUP_NAME_SUFFIX = "ng-custom"; mock_settings.EKS_DEFAULT_NODE_INSTANCE_TYPE = "t3.small"
         mock_settings.EKS_DEFAULT_NODE_DESIRED_SIZE = 1; mock_settings.EKS_DEFAULT_NODE_MIN_SIZE = 1; mock_settings.EKS_DEFAULT_NODE_MAX_SIZE = 1
         mock_settings.ECR_DEFAULT_IMAGE_TAG_MUTABILITY = "IMMUTABLE"; mock_settings.ECR_DEFAULT_SCAN_ON_PUSH = False
         mock_settings.EC2_DEFAULT_APP_PORTS_JSON = json.dumps([{"port": 8080, "protocol": "tcp"}])
-        mock_settings.DEFAULT_DOMAIN_NAME_FOR_APPS = "mcp-test.com"; mock_settings.NGINX_INGRESS_SERVICE_NAME = "ingress-nginx-controller-svc"
+        mock_settings.DEFAULT_DOMAIN_NAME_FOR_APPS = "apptest.com"; mock_settings.NGINX_INGRESS_SERVICE_NAME = "ingress-nginx-controller-svc"
         mock_settings.NGINX_INGRESS_NAMESPACE = "ingress-nginx"; mock_settings.LOAD_BALANCER_DETAILS_TIMEOUT_SECONDS = 20
         mock_settings.ROUTE53_ACM_TF_FILENAME = "dns_and_cert_setup.tf"; mock_settings.EKS_DEFAULT_USER_ARN = "arn:aws:iam::123456789012:user/kubeconfig-user"
         mock_settings.NGINX_HELM_CHART_VERSION = "4.9.0"
@@ -1263,7 +1263,7 @@ if __name__ == '__main__':
         mock_ph_cluster_dir_obj.mkdir = MagicMock()
         mock_ph_cluster_dir_obj.__truediv__.side_effect = lambda p: pathlib.Path(str(mock_ph_cluster_dir_obj), p)
 
-        mock_temp_clone_dir_str = "/tmp/mcp_clone_ch_helper"
+        mock_temp_clone_dir_str = "/tmp/app_clone_ch_helper"
         mock_mkdtemp.return_value = mock_temp_clone_dir_str
         mock_cloned_repo_subdir_path_obj = MagicMock(spec=pathlib.Path)
         mock_cloned_repo_subdir_path_obj.__str__.return_value = f"{mock_temp_clone_dir_str}/{_expected_repo_name_part_for_mock}"
@@ -1294,7 +1294,7 @@ if __name__ == '__main__':
         mock_run_terraform_apply.return_value = (True, mock_tf_outputs_eks_ecr, "apply_stdout_eks_ecr", "")
 
         mock_clone_repository.return_value = {"success": True, "cloned_path": str(mock_cloned_repo_subdir_path_obj)}
-        expected_local_tag_for_test = f"{_expected_repo_name_part_for_mock}-mcp:{mock_uuid4.return_value.hex}"
+        expected_local_tag_for_test = f"{_expected_repo_name_part_for_mock}-app:{mock_uuid4.return_value.hex}"
         mock_build_docker_image_locally.return_value = {"success": True, "image_id": "img123", "image_tags": [expected_local_tag_for_test]}
         mock_ecr_registry_from_token = f"https://12345.dkr.ecr.{self.aws_creds.aws_region}.amazonaws.com"
         mock_get_ecr_login_details.return_value = ("AWS", "ecr_pass_secret", mock_ecr_registry_from_token)
@@ -1863,8 +1863,8 @@ if __name__ == '__main__':
         mock_run_terraform_init, mock_run_terraform_apply
     ):
         mock_settings.PERSISTENT_WORKSPACE_BASE_DIR = self.test_persistent_workspaces
-        mock_settings.EKS_DEFAULT_CLUSTER_NAME_PREFIX = "mcp-eks"
-        mock_settings.ECR_DEFAULT_REPO_NAME_PREFIX = "mcp-app"
+        mock_settings.EKS_DEFAULT_CLUSTER_NAME_PREFIX = "appeks"
+        mock_settings.ECR_DEFAULT_REPO_NAME_PREFIX = "appapp"
 
         # Make terraform_service functions awaitable mocks that return successful values
         mock_generate_ecr_tf_config.return_value = "path/to/ecr.tf"
@@ -1930,7 +1930,7 @@ if __name__ == '__main__':
         # Simulate successful Terraform apply with necessary outputs for ECR push
         mock_tf_outputs = {
             "ecr_repository_url": {"value": "test_ecr_url_output"},
-            "ecr_repository_name": {"value": "mcp-app-test-repo-testuuid"},
+            "ecr_repository_name": {"value": "appapp-test-repo-testuuid"},
         }
         mock_tf_apply.return_value = (True, mock_tf_outputs, "apply_stdout", "")
 
@@ -1980,7 +1980,7 @@ if __name__ == '__main__':
 
         mock_tf_outputs = {
             "ecr_repository_url": {"value": "test_ecr_url_output"},
-            "ecr_repository_name": {"value": "mcp-app-test-repo-testuuid"},
+            "ecr_repository_name": {"value": "appapp-test-repo-testuuid"},
         }
         mock_tf_apply.return_value = (True, mock_tf_outputs, "apply_stdout", "")
 
