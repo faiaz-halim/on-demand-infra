@@ -1,6 +1,12 @@
 # kind-config.yaml.j2
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
+kubeadmConfigPatches:
+- |
+  apiVersion: kubeadm.k8s.io/v1beta3
+  kind: ClusterConfiguration
+  apiServer:
+    timeoutForControlPlane: 5m0s
 name: {{ cluster_name }}
 {% if disable_default_cni %}
 networking:
@@ -9,7 +15,7 @@ networking:
 {% if feature_gates %}
 featureGates:
 {% for key, value in feature_gates.items() %}
-  "{{ key }}}": {{ value | lower }}
+  "{{ key }}": {{ value | lower }}
 {% endfor %}
 {% endif %}
 nodes:
@@ -22,7 +28,7 @@ nodes:
     kind: InitConfiguration
     nodeRegistration:
       kubeletExtraArgs:
-        cgroup-driver: cgroupfs
+        cgroup-driver: systemd
   {% if extra_port_mappings %}
   extraPortMappings:
   {% for mapping in extra_port_mappings %}

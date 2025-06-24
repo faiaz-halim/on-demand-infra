@@ -5,6 +5,7 @@ import shutil
 import tempfile
 import time
 from typing import Optional, List
+from jinja2 import Environment, FileSystemLoader
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -33,6 +34,12 @@ def _run_command(command: List[str], env: Optional[dict] = None) -> subprocess.C
 
         if process.stderr.strip():
             logger.debug(f"Command '{' '.join(command)}' stderr:\n{process.stderr.strip()}")
+
+        if process.returncode != 0:
+            logger.error(f"Command failed with return code {process.returncode}")
+            logger.error(f"Command stderr: {process.stderr.strip()}")
+            logger.error(f"Current PATH in environment: {current_env.get('PATH')}")
+
         return process
     except FileNotFoundError:
         logger.error(f"Command not found: {command[0]}")
@@ -116,15 +123,50 @@ def create_kind_cluster(
         logger.error("kind not found in PATH")
         return False
 
+    # If config_path is a Jinja2 template, render it to a temporary file
+    if config_path and config_path.endswith('.j2'):
+        try:
+            # Create a temporary file
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as temp_file:
+                # Set up Jinja2 environment
+                template_dir = os.path.dirname(config_path)
+                template_file = os.path.basename(config_path)
+                env = Environment(loader=FileSystemLoader(template_dir))
+                template = env.get_template(template_file)
+                # Create context with default values
+                context = {
+                    'cluster_name': cluster_name,
+                    'disable_default_cni': False,
+                    'feature_gates': {},
+                    'control_plane_image': None,
+                    'extra_port_mappings': [],
+                    'num_workers': 3,
+                    'worker_image': None
+                }
+                # Render template with context
+                rendered_config = template.render(**context)
+                temp_file.write(rendered_config)
+                temp_config_path = temp_file.name
+            # Use the temporary rendered config
+            config_path = temp_config_path
+        except Exception as e:
+            logger.error(f"Failed to render Kind config template: {str(e)}")
+            return False
+    else:
+        temp_config_path = None
+
     # Build create command
     cmd = [kind_path, 'create', 'cluster', '--name', cluster_name]
     if config_path:
         cmd.extend(['--config', config_path])
 
-    # Create cluster
+    # Create cluster with additional logging
+    logger.info(f"Executing Kind create command: {' '.join(cmd)}")
     process = _run_command(cmd)
     if process.returncode != 0:
-        logger.error(f"Cluster creation failed: {process.stderr}")
+        logger.error(f"Cluster creation failed. Exit code: {process.returncode}")
+        logger.error(f"Stderr: {process.stderr.strip()}")
+        logger.error(f"Stdout: {process.stdout.strip()}")
         return False
 
     # Wait for API server

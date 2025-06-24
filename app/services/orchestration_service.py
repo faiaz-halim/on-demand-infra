@@ -15,7 +15,8 @@ from app.services import ssh_service
 from app.services import manifest_service
 from app.services import docker_service
 from app.services import git_service
-from app.services import k8s_service # Added for kubeconfig and Helm
+from app.services import kind_service
+from app.services import k8s_service
 import docker
 import boto3
 
@@ -42,27 +43,27 @@ async def handle_local_deployment(
     app_name = repo_name
 
     # 1. Check if Kind cluster exists, create if not
-    kind_cluster_exists = await asyncio.to_thread(k8s_service.kind_cluster_exists, settings.KIND_CLUSTER_NAME)
+    kind_cluster_exists = await asyncio.to_thread(kind_service.detect_kind_cluster, settings.KIND_CLUSTER_NAME)
     if not kind_cluster_exists:
         await _append_message_to_chat(chat_request, "assistant", f"Creating Kind cluster '{settings.KIND_CLUSTER_NAME}'...")
-        create_ok, create_out = await asyncio.to_thread(k8s_service.create_kind_cluster, settings.KIND_CLUSTER_NAME, settings.KIND_CALICO_MANIFEST_URL)
+        create_ok = await asyncio.to_thread(kind_service.create_kind_cluster, settings.KIND_CLUSTER_NAME, config_path='app/templates/kind/kind-config.yaml.j2', calico_yaml_url=settings.KIND_CALICO_MANIFEST_URL)
         if not create_ok:
-            err_msg = f"Failed to create Kind cluster: {create_out}"
+            err_msg = f"Failed to create Kind cluster"
             await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
             return {"status": "error", "mode": "local", "message": err_msg}
         await _append_message_to_chat(chat_request, "assistant", f"Kind cluster '{settings.KIND_CLUSTER_NAME}' created successfully.")
     else:
         await _append_message_to_chat(chat_request, "assistant", f"Using existing Kind cluster '{settings.KIND_CLUSTER_NAME}'.")
 
-        # 2. Clone the repository
-        await _append_message_to_chat(chat_request, "assistant", f"Cloning repository {repo_url}...")
-        clone_path = pathlib.Path(tempfile.mkdtemp(prefix="app_local_"))
-        try:
-            repo_dir = await asyncio.to_thread(git_service.clone_repository, repo_url, clone_path)
-        except git_service.GitCloneError as e:
-            err_msg = f"Failed to clone repository: {str(e)}"
-            await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
-            return {"status": "error", "mode": "local", "message": err_msg}
+    # 2. Clone the repository
+    await _append_message_to_chat(chat_request, "assistant", f"Cloning repository {repo_url}...")
+    clone_path = pathlib.Path(tempfile.mkdtemp(prefix="app_local_"))
+    try:
+        repo_dir = await asyncio.to_thread(git_service.clone_repository, repo_url, clone_path)
+    except git_service.GitCloneError as e:
+        err_msg = f"Failed to clone repository: {str(e)}"
+        await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+        return {"status": "error", "mode": "local", "message": err_msg}
 
     # 3. Build Docker image
     image_tag = f"{app_name}:latest"
@@ -76,9 +77,9 @@ async def handle_local_deployment(
 
     # 4. Load image into Kind cluster
     await _append_message_to_chat(chat_request, "assistant", f"Loading image {image_tag} into Kind cluster...")
-    load_ok, load_out = await asyncio.to_thread(k8s_service.load_image_to_kind, settings.KIND_CLUSTER_NAME, image_tag)
+    load_ok = await asyncio.to_thread(kind_service.load_image_into_kind, image_tag, settings.KIND_CLUSTER_NAME)
     if not load_ok:
-        err_msg = f"Failed to load image to Kind cluster: {load_out}"
+        err_msg = f"Failed to load image to Kind cluster"
         await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
         shutil.rmtree(str(clone_path))
         return {"status": "error", "mode": "local", "message": err_msg}
@@ -772,7 +773,7 @@ async def handle_cloud_hosted_deployment(
 
         # 10. Install Nginx Ingress Controller using Helm
         nginx_install_ok = await asyncio.to_thread(
-            k8s_service.install_nginx_ingress_helm,
+            k8s_service.install_nginx_ingress,
             kubeconfig_path=kubeconfig_file_path,
             namespace="ingress-nginx",
             helm_chart_version=settings.NGINX_HELM_CHART_VERSION
@@ -788,7 +789,7 @@ async def handle_cloud_hosted_deployment(
         # 11. Get Load Balancer details for Nginx Ingress
         await _append_message_to_chat(chat_request, "assistant", "Fetching Load Balancer details for Nginx Ingress...")
         nlb_details = await asyncio.to_thread(
-            k8s_service.get_load_balancer_details,
+            kind_service.get_load_balancer_details,
             kubeconfig_path=kubeconfig_file_path,
             service_name=settings.NGINX_INGRESS_SERVICE_NAME,
             namespace=settings.NGINX_INGRESS_NAMESPACE,
@@ -994,7 +995,7 @@ async def handle_cloud_hosted_deployment(
         await _append_message_to_chat(chat_request, "assistant", "Applying application and Ingress manifests to EKS cluster...")
         # apply_manifests expects a directory. All our manifests (app deploy, service, ingress) are in workspace_dir_path.
         apply_k8s_ok = await asyncio.to_thread(
-            k8s_service.apply_manifests,
+            kind_service.apply_manifests,
             kubeconfig_path=kubeconfig_file_path,
             manifest_dir_or_file=str(workspace_dir_path), # Directory containing all YAMLs
             namespace=target_namespace_to_use
@@ -1312,7 +1313,7 @@ async def handle_cloud_hosted_redeploy(
 
     await _append_message_to_chat(chat_request, "assistant", f"Updating Kubernetes deployment '{app_name}' in namespace '{namespace}' with new image '{pushed_image_uri_redeploy}'...")
 
-    set_image_result = await asyncio.to_thread(k8s_service._run_kubectl_command, kubectl_set_image_cmd, str(kubeconfig_file_path))
+    set_image_result = await asyncio.to_thread(kind_service._run_kubectl_command, kubectl_set_image_cmd, str(kubeconfig_file_path))
 
     logger.info(f"Kubectl set image stdout for '{app_name}':\n{set_image_result.stdout}")
     if set_image_result.stderr:
@@ -1327,7 +1328,7 @@ async def handle_cloud_hosted_redeploy(
         # Rollback mechanism
         await _append_message_to_chat(chat_request, "assistant", "Attempting rollback to previous deployment version...")
         rollback_cmd = ["rollout", "undo", f"deployment/{app_name}", "--namespace", namespace]
-        rollback_result = await asyncio.to_thread(k8s_service._run_kubectl_command, rollback_cmd, str(kubeconfig_file_path))
+        rollback_result = await asyncio.to_thread(kind_service._run_kubectl_command, rollback_cmd, str(kubeconfig_file_path))
 
         if rollback_result.returncode == 0:
             rollback_msg = f"Rollback successful for {app_name} in namespace {namespace}"
@@ -1394,7 +1395,7 @@ async def handle_cloud_hosted_scale(
         ]
 
         scale_result = await asyncio.to_thread(
-            k8s_service._run_kubectl_command,
+            kind_service._run_kubectl_command,
             command_args=scale_command_list,
             kubeconfig_path=str(kubeconfig_file_path)
         )
@@ -1424,7 +1425,7 @@ async def handle_cloud_hosted_scale(
                     f.write(hpa_manifest)
 
                 apply_hpa_result = await asyncio.to_thread(
-                    k8s_service._run_kubectl_command,
+                    kind_service._run_kubectl_command,
                     ["apply", "-f", str(hpa_file_path)],
                     str(kubeconfig_file_path)
                 )
