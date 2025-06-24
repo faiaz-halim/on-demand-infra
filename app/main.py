@@ -54,7 +54,7 @@ app.add_middleware(
 if settings.ENVIRONMENT == "production":
     app.add_middleware(HTTPSRedirectMiddleware)
 
-app.include_router(chat.router, prefix="/api/v1", tags=["chat"])
+app.include_router(chat.router, tags=["chat"])
 
 @app.get("/health")
 async def health_check():

@@ -33,11 +33,93 @@ async def handle_local_deployment(
     namespace: str,
     chat_request: ChatCompletionRequest
 ):
-    # ... (implementation as before) ...
     logger.info(f"Local deployment requested for repo '{repo_url}' in namespace '{namespace}'.")
     message_content = f"Local deployment process started for {repo_url} in namespace {namespace}. Preparing environment..."
     await _append_message_to_chat(chat_request, "assistant", message_content)
-    return {"status": "success", "mode": "local", "message": message_content}
+
+    # Derive app name from repo URL
+    repo_name = repo_url.split('/')[-1].replace('.git', '').replace('_', '-').lower()
+    app_name = repo_name
+
+    # 1. Check if Kind cluster exists, create if not
+    kind_cluster_exists = await asyncio.to_thread(k8s_service.kind_cluster_exists, settings.KIND_CLUSTER_NAME)
+    if not kind_cluster_exists:
+        await _append_message_to_chat(chat_request, "assistant", f"Creating Kind cluster '{settings.KIND_CLUSTER_NAME}'...")
+        create_ok, create_out = await asyncio.to_thread(k8s_service.create_kind_cluster, settings.KIND_CLUSTER_NAME, settings.KIND_CALICO_MANIFEST_URL)
+        if not create_ok:
+            err_msg = f"Failed to create Kind cluster: {create_out}"
+            await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+            return {"status": "error", "mode": "local", "message": err_msg}
+        await _append_message_to_chat(chat_request, "assistant", f"Kind cluster '{settings.KIND_CLUSTER_NAME}' created successfully.")
+    else:
+        await _append_message_to_chat(chat_request, "assistant", f"Using existing Kind cluster '{settings.KIND_CLUSTER_NAME}'.")
+
+    # 2. Clone the repository
+    await _append_message_to_chat(chat_request, "assistant", f"Cloning repository {repo_url}...")
+    clone_path = pathlib.Path(tempfile.mkdtemp(prefix="app_local_"))
+    cloned_repo_details = await asyncio.to_thread(git_service.clone_repository, repo_url, str(clone_path))
+    if not cloned_repo_details or not cloned_repo_details.get("success"):
+        err_msg = f"Failed to clone repository: {cloned_repo_details.get('error', 'Unknown error')}"
+        await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+        return {"status": "error", "mode": "local", "message": err_msg}
+    repo_dir = pathlib.Path(cloned_repo_details["path"])
+
+    # 3. Build Docker image
+    image_tag = f"{app_name}:latest"
+    await _append_message_to_chat(chat_request, "assistant", f"Building Docker image {image_tag}...")
+    build_result = await asyncio.to_thread(docker_service.build_docker_image_locally, str(repo_dir), image_tag)
+    if not build_result.get("success"):
+        err_msg = f"Failed to build Docker image: {build_result.get('error', 'Unknown error')}"
+        await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+        shutil.rmtree(str(clone_path))
+        return {"status": "error", "mode": "local", "message": err_msg}
+
+    # 4. Load image into Kind cluster
+    await _append_message_to_chat(chat_request, "assistant", f"Loading image {image_tag} into Kind cluster...")
+    load_ok, load_out = await asyncio.to_thread(k8s_service.load_image_to_kind, settings.KIND_CLUSTER_NAME, image_tag)
+    if not load_ok:
+        err_msg = f"Failed to load image to Kind cluster: {load_out}"
+        await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+        shutil.rmtree(str(clone_path))
+        return {"status": "error", "mode": "local", "message": err_msg}
+
+    # 5. Deploy to Kind cluster
+    await _append_message_to_chat(chat_request, "assistant", f"Deploying application to Kind cluster in namespace '{namespace}'...")
+    # Create namespace if not exists
+    ns_ok, ns_out = await asyncio.to_thread(k8s_service.create_namespace, namespace, settings.KIND_CLUSTER_NAME)
+    if not ns_ok:
+        err_msg = f"Failed to create namespace {namespace}: {ns_out}"
+        await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+        shutil.rmtree(str(clone_path))
+        return {"status": "error", "mode": "local", "message": err_msg}
+
+    # Generate manifests
+    container_port = 80  # default port, can be customized
+    deployment_yaml = manifest_service.generate_deployment_manifest(image_tag, app_name, 1, [container_port], namespace)
+    service_yaml = manifest_service.generate_service_manifest(app_name, "NodePort", [{"port": 80, "targetPort": container_port}], namespace)
+
+    # Apply manifests
+    apply_ok, apply_out = await asyncio.to_thread(k8s_service.apply_manifests, None, namespace, deployment_yaml + "\n---\n" + service_yaml)
+    if not apply_ok:
+        err_msg = f"Failed to apply manifests: {apply_out}"
+        await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+        shutil.rmtree(str(clone_path))
+        return {"status": "error", "mode": "local", "message": err_msg}
+
+    # Get service details
+    service_info = await asyncio.to_thread(k8s_service.get_service_info, app_name, namespace, settings.KIND_CLUSTER_NAME)
+    if not service_info:
+        err_msg = f"Failed to get service details for {app_name}"
+        await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+        shutil.rmtree(str(clone_path))
+        return {"status": "error", "mode": "local", "message": err_msg}
+
+    # Cleanup
+    shutil.rmtree(str(clone_path))
+
+    success_msg = f"Application deployed successfully to Kind cluster. Service details: {service_info}"
+    await _append_message_to_chat(chat_request, "assistant", success_msg)
+    return {"status": "success", "mode": "local", "message": success_msg, "service_info": service_info}
 
 
 async def handle_cloud_local_deployment(

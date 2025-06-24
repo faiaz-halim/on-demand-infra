@@ -4,9 +4,9 @@ import os
 import shutil
 import tempfile
 import pathlib
-from typing import Optional, List, Dict, Tuple, Any # Added Tuple, Any
-import time # Added
-import json # Added
+from typing import Optional, List, Dict, Tuple, Any
+import time
+import json
 
 import yaml
 import base64
@@ -15,6 +15,96 @@ import base64
 logger = logging.getLogger(__name__)
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+
+def _run_command(command: List[str]) -> Tuple[bool, str]:
+    """Helper to run a command and return (success, output)"""
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return True, result.stdout.strip()
+    except subprocess.CalledProcessError as e:
+        return False, e.stderr.strip()
+    except Exception as e:
+        return False, str(e)
+
+def kind_cluster_exists(cluster_name: str) -> bool:
+    """Check if a Kind cluster with the given name exists"""
+    kind_path = shutil.which('kind')
+    if not kind_path:
+        logger.error("kind command not found. Please ensure it is installed and in PATH.")
+        return False
+
+    success, output = _run_command([kind_path, 'get', 'clusters'])
+    if not success:
+        logger.error(f"Failed to get Kind clusters: {output}")
+        return False
+
+    clusters = output.splitlines()
+    return cluster_name in clusters
+
+def create_kind_cluster(cluster_name: str, calico_manifest_url: Optional[str] = None) -> Tuple[bool, str]:
+    """Create a Kind cluster with the given name if it doesn't exist"""
+    if kind_cluster_exists(cluster_name):
+        msg = f"Kind cluster '{cluster_name}' already exists."
+        logger.info(msg)
+        return True, msg
+
+    kind_path = shutil.which('kind')
+    if not kind_path:
+        error_msg = "kind command not found. Please ensure it is installed and in PATH."
+        logger.error(error_msg)
+        return False, error_msg
+
+    # Create a temporary Kind configuration file to set cgroup driver
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as tmpfile:
+            config_content = """
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  kubeadmConfigPatches:
+  - |
+    kind: InitConfiguration
+    nodeRegistration:
+      kubeletExtraArgs:
+        cgroup-driver: cgroupfs
+"""
+            tmpfile.write(config_content)
+            config_path = tmpfile.name
+    except Exception as e:
+        error_msg = f"Failed to create Kind configuration file: {str(e)}"
+        logger.error(error_msg)
+        return False, error_msg
+
+    create_command = [kind_path, 'create', 'cluster', '--name', cluster_name, '--config', config_path]
+    success, output = _run_command(create_command)
+
+    # Clean up the temporary config file
+    try:
+        os.remove(config_path)
+    except OSError as e:
+        logger.warning(f"Failed to remove temporary Kind config file: {e}")
+
+    if success:
+        logger.info(f"Kind cluster '{cluster_name}' created successfully.")
+        # Apply Calico CNI if URL is provided
+        if calico_manifest_url:
+            logger.info(f"Applying Calico CNI from {calico_manifest_url}...")
+            apply_calico_ok, calico_out = _run_command(['kubectl', 'apply', '-f', calico_manifest_url])
+            if not apply_calico_ok:
+                error_msg = f"Failed to apply Calico CNI: {calico_out}"
+                logger.error(error_msg)
+                return False, error_msg
+        return True, output
+    else:
+        error_msg = f"Failed to create Kind cluster '{cluster_name}': {output}"
+        logger.error(error_msg)
+        return False, error_msg
 
 def _run_kubectl_command(command: List[str], kubeconfig_path: str) -> subprocess.CompletedProcess:
     """

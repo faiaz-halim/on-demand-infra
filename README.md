@@ -125,7 +125,7 @@ curl -X POST http://localhost:8000/v1/chat/completions \
   ],
   "action": "deploy",
   "deployment_mode": "local",
-  "github_repo_url": "https://github.com/your_group/app-server-test-repo.git",
+  "github_repo_url": "https://github.com/jules-agent/app-server-test-repo.git",
   "target_namespace": "my-local-app"
 }'
 ```
@@ -154,7 +154,7 @@ curl -X POST http://localhost:8000/v1/chat/completions \
   ],
   "action": "deploy",
   "deployment_mode": "cloud-local",
-  "github_repo_url": "https://github.com/your_group/app-server-test-repo.git",
+  "github_repo_url": "https://github.com/jules-agent/app-server-test-repo.git",
   "target_namespace": "my-app-cl",
   "instance_name": "my-test-ec2-instance",
   "ec2_key_name": "<YOUR_EC2_KEY_PAIR_NAME>",
@@ -194,7 +194,7 @@ curl -X POST http://localhost:8000/v1/chat/completions \
   ],
   "action": "deploy",
   "deployment_mode": "cloud-hosted",
-  "github_repo_url": "https://github.com/your_group/app-server-test-repo.git",
+  "github_repo_url": "https://github.com/jules-agent/app-server-test-repo.git",
   "target_namespace": "my-app-eks",
   "instance_name": "my-eks-app-deployment",
   "aws_credentials": {
@@ -216,7 +216,7 @@ curl -X POST http://localhost:8000/v1/chat/completions \
   ],
   "action": "deploy",
   "deployment_mode": "cloud-hosted",
-  "github_repo_url": "https://github.com/your_group/app-server-test-repo.git",
+  "github_repo_url": "https://github.com/jules-agent/app-server-test-repo.git",
   "target_namespace": "my-app-eks-ssl",
   "instance_name": "my-eks-app-ssl",
   "aws_credentials": {
@@ -257,7 +257,7 @@ curl -X POST http://localhost:8000/v1/chat/completions \
   "action": "redeploy",
   "deployment_mode": "cloud-hosted",
   "instance_id": "my-eks-cluster",
-  "github_repo_url": "https://github.com/your_group/app-server-test-repo.git"
+  "github_repo_url": "https://github.com/jules-agent/app-server-test-repo.git"
 }'
 ```
 
