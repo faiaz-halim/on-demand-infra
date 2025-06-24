@@ -54,15 +54,15 @@ async def handle_local_deployment(
     else:
         await _append_message_to_chat(chat_request, "assistant", f"Using existing Kind cluster '{settings.KIND_CLUSTER_NAME}'.")
 
-    # 2. Clone the repository
-    await _append_message_to_chat(chat_request, "assistant", f"Cloning repository {repo_url}...")
-    clone_path = pathlib.Path(tempfile.mkdtemp(prefix="app_local_"))
-    cloned_repo_details = await asyncio.to_thread(git_service.clone_repository, repo_url, str(clone_path))
-    if not cloned_repo_details or not cloned_repo_details.get("success"):
-        err_msg = f"Failed to clone repository: {cloned_repo_details.get('error', 'Unknown error')}"
-        await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
-        return {"status": "error", "mode": "local", "message": err_msg}
-    repo_dir = pathlib.Path(cloned_repo_details["path"])
+        # 2. Clone the repository
+        await _append_message_to_chat(chat_request, "assistant", f"Cloning repository {repo_url}...")
+        clone_path = pathlib.Path(tempfile.mkdtemp(prefix="app_local_"))
+        try:
+            repo_dir = await asyncio.to_thread(git_service.clone_repository, repo_url, clone_path)
+        except git_service.GitCloneError as e:
+            err_msg = f"Failed to clone repository: {str(e)}"
+            await _append_message_to_chat(chat_request, "assistant", f"Error: {err_msg}")
+            return {"status": "error", "mode": "local", "message": err_msg}
 
     # 3. Build Docker image
     image_tag = f"{app_name}:latest"

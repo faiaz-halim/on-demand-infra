@@ -46,7 +46,16 @@ def kind_cluster_exists(cluster_name: str) -> bool:
     clusters = output.splitlines()
     return cluster_name in clusters
 
-def create_kind_cluster(cluster_name: str, calico_manifest_url: Optional[str] = None) -> Tuple[bool, str]:
+def create_kind_cluster(
+    cluster_name: str,
+    calico_manifest_url: Optional[str] = None,
+    num_workers: int = 3,
+    disable_default_cni: bool = False,
+    control_plane_image: Optional[str] = None,
+    worker_image: Optional[str] = None,
+    extra_port_mappings: Optional[List[Dict]] = None,
+    feature_gates: Optional[Dict] = None
+) -> Tuple[bool, str]:
     """Create a Kind cluster with the given name if it doesn't exist"""
     if kind_cluster_exists(cluster_name):
         msg = f"Kind cluster '{cluster_name}' already exists."
@@ -59,21 +68,25 @@ def create_kind_cluster(cluster_name: str, calico_manifest_url: Optional[str] = 
         logger.error(error_msg)
         return False, error_msg
 
-    # Create a temporary Kind configuration file to set cgroup driver
+    # Render Kind configuration from template
     try:
+        from jinja2 import Template
+        template_path = "app/templates/kind/kind-config.yaml.j2"
+        with open(template_path, "r") as f:
+            template_content = f.read()
+
+        template = Template(template_content)
+        config_content = template.render(
+            cluster_name=cluster_name,
+            num_workers=num_workers,
+            disable_default_cni=disable_default_cni,
+            control_plane_image=control_plane_image,
+            worker_image=worker_image,
+            extra_port_mappings=extra_port_mappings or [],
+            feature_gates=feature_gates
+        )
+
         with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as tmpfile:
-            config_content = """
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-nodes:
-- role: control-plane
-  kubeadmConfigPatches:
-  - |
-    kind: InitConfiguration
-    nodeRegistration:
-      kubeletExtraArgs:
-        cgroup-driver: cgroupfs
-"""
             tmpfile.write(config_content)
             config_path = tmpfile.name
     except Exception as e:

@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
 
     # Kind Cluster settings
-    KIND_CLUSTER_NAME: str = "on-demand-infra"
+    KIND_CLUSTER_NAME: str = "test"
     KIND_CALICO_MANIFEST_URL: Optional[str] = "https://raw.githubusercontent.com/projectcalico/calico/v3.28.0/manifests/calico.yaml"
     DEFAULT_KIND_VERSION: str = "0.23.0"
     DEFAULT_KUBECTL_VERSION: str = "1.30.0"

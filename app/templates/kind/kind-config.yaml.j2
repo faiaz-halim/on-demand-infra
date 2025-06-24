@@ -2,17 +2,45 @@
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: {{ cluster_name }}
-nodes:
-- role: control-plane
-{% if num_workers and num_workers > 0 %}
-{% for i in range(num_workers) %}
-- role: worker
-{% endfor %}
+{% if disable_default_cni %}
+networking:
+  disableDefaultCNI: true
 {% endif %}
-# Example of a feature gate, can be passed in context
 {% if feature_gates %}
 featureGates:
 {% for key, value in feature_gates.items() %}
-  "{{ key }}": {{ value | lower }}
+  "{{ key }}}": {{ value | lower }}
+{% endfor %}
+{% endif %}
+nodes:
+- role: control-plane
+  {% if control_plane_image %}
+  image: {{ control_plane_image }}
+  {% endif %}
+  kubeadmConfigPatches:
+  - |
+    kind: InitConfiguration
+    nodeRegistration:
+      kubeletExtraArgs:
+        cgroup-driver: cgroupfs
+  {% if extra_port_mappings %}
+  extraPortMappings:
+  {% for mapping in extra_port_mappings %}
+  - containerPort: {{ mapping.container_port }}
+    hostPort: {{ mapping.host_port }}
+    {% if mapping.listen_address %}
+    listenAddress: "{{ mapping.listen_address }}"
+    {% endif %}
+    {% if mapping.protocol %}
+    protocol: {{ mapping.protocol }}
+    {% endif %}
+  {% endfor %}
+  {% endif %}
+{% if num_workers and num_workers > 0 %}
+{% for i in range(num_workers) %}
+- role: worker
+  {% if worker_image %}
+  image: {{ worker_image }}
+  {% endif %}
 {% endfor %}
 {% endif %}
